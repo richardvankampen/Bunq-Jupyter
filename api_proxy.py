@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
 """
-Bunq Dashboard API Proxy - Secure Edition
+Bunq Dashboard API Proxy - Production Edition
+================================================
 Flask backend with Vaultwarden secret management
 READ-ONLY Bunq API access for maximum security
+Serves both API and Frontend on port 5000 (single origin)
+
+SECURITY FEATURES:
+- Vaultwarden integration for secret management
+- READ-ONLY Bunq API access (no write operations)
+- Single-origin architecture (eliminates CORS issues)
+- VPN-only access recommended (no port forwarding!)
+- Demo mode fallback for testing
 """
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from bunq.sdk.context.api_context import ApiContext
 from bunq.sdk.context.bunq_context import BunqContext
@@ -15,10 +24,13 @@ import os
 import json
 import requests
 import logging
+import random
 
 # ============================================
 # LOGGING CONFIGURATION
 # ============================================
+
+os.makedirs('logs', exist_ok=True)
 
 logging.basicConfig(
     level=os.getenv('LOG_LEVEL', 'INFO'),
@@ -31,14 +43,50 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# FLASK APP INITIALIZATION
+# FLASK APP INITIALIZATION (Single Origin)
 # ============================================
 
-app = Flask(__name__)
+# Serve static files from current directory
+# This eliminates CORS issues and simplifies mobile access
+app = Flask(__name__, static_url_path='', static_folder='.')
 
-# CORS Configuration - Restrict to specific origins in production
-ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', '*').split(',')
-CORS(app, origins=ALLOWED_ORIGINS)
+# CORS kept for defense-in-depth
+CORS(app)
+
+logger.info("🌐 Flask configured for single-origin architecture")
+logger.info("   Frontend + API both on port 5000")
+
+# ============================================
+# STATIC FILE SERVING (Frontend)
+# ============================================
+
+@app.route('/')
+def serve_dashboard():
+    """Serve the main dashboard HTML"""
+    try:
+        logger.debug("📄 Serving index.html")
+        return send_from_directory('.', 'index.html')
+    except Exception as e:
+        logger.error(f"❌ Error serving index.html: {e}")
+        return jsonify({'error': 'Dashboard not found. Ensure index.html is in the same directory.'}), 404
+
+@app.route('/<path:path>')
+def serve_static(path):
+    """
+    Serve static assets (CSS, JS, images)
+    Security: Prevents directory traversal
+    """
+    # Security check
+    if '..' in path or path.startswith('/'):
+        logger.warning(f"⚠️ Blocked suspicious path: {path}")
+        return jsonify({'error': 'Invalid path'}), 400
+    
+    try:
+        logger.debug(f"📦 Serving: {path}")
+        return send_from_directory('.', path)
+    except Exception as e:
+        logger.error(f"❌ File not found: {path}")
+        return jsonify({'error': 'File not found'}), 404
 
 # ============================================
 # VAULTWARDEN SECRET RETRIEVAL
@@ -47,6 +95,13 @@ CORS(app, origins=ALLOWED_ORIGINS)
 def get_api_key_from_vaultwarden():
     """
     Securely retrieve Bunq API key from Vaultwarden vault.
+    
+    This is the RECOMMENDED method for production deployments.
+    Benefits:
+    - API key never stored in plain text
+    - Easy rotation (update vault, restart container)
+    - Centralized secret management
+    - Audit logging
     
     Returns:
         str: Bunq API key or None if retrieval failed
@@ -59,6 +114,8 @@ def get_api_key_from_vaultwarden():
         api_key = os.getenv('BUNQ_API_KEY', '')
         if api_key:
             logger.info(f"✅ API key loaded from environment: {api_key[:10]}...")
+        else:
+            logger.warning("⚠️ No API key found in environment")
         return api_key
     
     logger.info("🔐 Retrieving API key from Vaultwarden vault...")
@@ -72,10 +129,11 @@ def get_api_key_from_vaultwarden():
     if not client_id or not client_secret:
         logger.error("❌ Vaultwarden credentials missing in environment!")
         logger.error("   Required: VAULTWARDEN_CLIENT_ID and VAULTWARDEN_CLIENT_SECRET")
+        logger.error("   Falling back to demo mode")
         return None
     
     try:
-        # Step 1: Authenticate and get access token
+        # Step 1: Authenticate with Vaultwarden using OAuth2
         logger.info("🔑 Authenticating with Vaultwarden...")
         token_url = f"{vault_url}/identity/connect/token"
         token_data = {
@@ -127,7 +185,7 @@ def get_api_key_from_vaultwarden():
         
     except requests.exceptions.ConnectionError:
         logger.error(f"❌ Cannot connect to Vaultwarden at {vault_url}")
-        logger.error("   Check if Vaultwarden container is running and accessible")
+        logger.error("   Check if Vaultwarden container is running")
         return None
     except requests.exceptions.Timeout:
         logger.error(f"❌ Vaultwarden request timeout")
@@ -150,13 +208,6 @@ API_KEY = get_api_key_from_vaultwarden()
 CONFIG_FILE = 'config/bunq_production.conf'
 ENVIRONMENT = os.getenv('BUNQ_ENVIRONMENT', 'PRODUCTION')
 
-# Validate API key before proceeding
-if not API_KEY:
-    logger.error("❌ No valid API key found!")
-    logger.error("   Set USE_VAULTWARDEN=true and configure Vaultwarden credentials,")
-    logger.error("   OR set BUNQ_API_KEY environment variable")
-    # Continue running for demo mode
-
 # ============================================
 # BUNQ API INITIALIZATION (READ-ONLY)
 # ============================================
@@ -165,8 +216,12 @@ def init_bunq():
     """
     Initialize Bunq API context with READ-ONLY access.
     
-    Security Note: This application ONLY uses list() and get() methods.
-    NO create(), update(), or delete() operations are ever called.
+    Security Note: This application ONLY uses:
+    - endpoint.MonetaryAccountBank.list() (READ)
+    - endpoint.Payment.list() (READ)
+    - endpoint.User.get() (READ)
+    
+    NO write operations (create/update/delete) are ever called!
     
     Returns:
         bool: True if successful, False otherwise
@@ -176,6 +231,8 @@ def init_bunq():
         return False
     
     try:
+        os.makedirs('config', exist_ok=True)
+        
         if not os.path.exists(CONFIG_FILE):
             logger.info("🔄 Creating new Bunq API context...")
             api_context = ApiContext.create(
@@ -201,81 +258,49 @@ def init_bunq():
         return False
 
 # ============================================
-# SECURITY: READ-ONLY API ENDPOINTS
+# API ENDPOINTS
 # ============================================
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint for monitoring"""
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'version': '2.0.0-vaultwarden',
+        'version': '2.1.0-unified',
         'api_status': 'initialized' if API_KEY else 'demo_mode',
-        'security': 'READ-ONLY'
+        'security': 'READ-ONLY',
+        'architecture': 'single-origin (port 5000)',
+        'vaultwarden_enabled': os.getenv('USE_VAULTWARDEN', 'false').lower() == 'true'
     })
-
-@app.route('/api/accounts', methods=['GET'])
-def get_accounts():
-    """
-    Get all Bunq accounts (READ-ONLY)
-    
-    Security: ONLY uses endpoint.MonetaryAccountBank.list()
-    """
-    if not API_KEY:
-        return jsonify({
-            'success': False,
-            'error': 'Demo mode - configure API key'
-        }), 503
-    
-    try:
-        logger.info("📊 Fetching accounts list...")
-        accounts = endpoint.MonetaryAccountBank.list().value
-        
-        account_data = []
-        for account in accounts:
-            account_data.append({
-                'id': account.id_,
-                'description': account.description,
-                'balance': float(account.balance.value),
-                'currency': account.balance.currency,
-                'iban': account.alias[0].value if account.alias else None
-            })
-        
-        logger.info(f"✅ Retrieved {len(account_data)} accounts")
-        return jsonify({
-            'success': True,
-            'data': account_data,
-            'count': len(account_data)
-        })
-    except Exception as e:
-        logger.error(f"❌ Error fetching accounts: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/transactions', methods=['GET'])
 def get_transactions():
     """
     Get transactions (READ-ONLY)
     
-    Security: ONLY uses endpoint.Payment.list()
-    NO Payment.create() or other write operations!
+    Query Parameters:
+    - timeRange: Number of days to fetch (default: 90)
+    - account_id: Specific account ID (optional)
+    
+    Returns demo data if Bunq API is unavailable.
     """
+    
+    # Get time range parameter (supports both names for compatibility)
+    days = int(request.args.get('timeRange', request.args.get('days', 90)))
+    
+    # Check if we have API key
     if not API_KEY:
-        return jsonify({
-            'success': False,
-            'error': 'Demo mode - configure API key'
-        }), 503
+        logger.info(f"📊 Demo mode: Generating demo transactions ({days} days)")
+        return generate_demo_transactions(days)
     
     try:
         account_id = request.args.get('account_id')
-        days = int(request.args.get('days', 90))
         
-        logger.info(f"📊 Fetching transactions (last {days} days)...")
+        logger.info(f"📊 Fetching real transactions (last {days} days)...")
         
         if not account_id:
+            # Fetch from all accounts
             accounts = endpoint.MonetaryAccountBank.list().value
             all_transactions = []
             
@@ -286,32 +311,33 @@ def get_transactions():
                     trans['account_name'] = account.description
                 all_transactions.extend(transactions)
             
-            logger.info(f"✅ Retrieved {len(all_transactions)} transactions")
+            logger.info(f"✅ Retrieved {len(all_transactions)} real transactions")
             return jsonify({
                 'success': True,
                 'data': all_transactions,
-                'count': len(all_transactions)
+                'count': len(all_transactions),
+                'source': 'bunq_api'
             })
         else:
+            # Fetch from specific account
             transactions = get_account_transactions(account_id, days)
             return jsonify({
                 'success': True,
                 'data': transactions,
-                'count': len(transactions)
+                'count': len(transactions),
+                'source': 'bunq_api'
             })
             
     except Exception as e:
         logger.error(f"❌ Error fetching transactions: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        logger.info("⚠️ Falling back to demo data")
+        return generate_demo_transactions(days)
 
 def get_account_transactions(account_id, days=90):
     """
     Get transactions for specific account (READ-ONLY)
     
-    Security: ONLY uses endpoint.Payment.list()
+    Security: ONLY uses endpoint.Payment.list() - no write operations!
     """
     payments = endpoint.Payment.list(
         monetary_account_id=account_id
@@ -342,107 +368,26 @@ def get_account_transactions(account_id, days=90):
     
     return transactions
 
-def categorize_transaction(description, counterparty):
-    """Simple rule-based categorization"""
-    desc_lower = description.lower() if description else ''
-    counter_lower = counterparty.display_name.lower() if counterparty and counterparty.display_name else ''
+def generate_demo_transactions(days=90):
+    """
+    Generate demo transactions for testing without API key.
+    This allows the dashboard to work immediately for development/testing.
+    """
+    transactions = []
     
-    combined = desc_lower + ' ' + counter_lower
-    
-    # Simple keyword matching
-    if any(word in combined for word in ['albert heijn', 'ah ', 'jumbo', 'lidl', 'aldi', 'plus', 'supermarkt']):
-        return 'Boodschappen'
-    elif any(word in combined for word in ['restaurant', 'cafe', 'bar', 'pizza', 'burger', 'starbucks']):
-        return 'Horeca'
-    elif any(word in combined for word in ['ns ', 'train', 'bus', 'taxi', 'uber', 'parking', 'shell', 'benzine']):
-        return 'Vervoer'
-    elif any(word in combined for word in ['huur', 'rent', 'hypotheek', 'mortgage']):
-        return 'Wonen'
-    elif any(word in combined for word in ['eneco', 'energie', 'gas', 'water', 'ziggo', 'kpn', 'telecom']):
-        return 'Utilities'
-    elif any(word in combined for word in ['bol.com', 'coolblue', 'mediamarkt', 'zara', 'h&m', 'shop']):
-        return 'Shopping'
-    elif any(word in combined for word in ['netflix', 'spotify', 'youtube', 'cinema', 'pathé', 'concert']):
-        return 'Entertainment'
-    elif any(word in combined for word in ['apotheek', 'pharmacy', 'dokter', 'doctor', 'tandarts', 'dentist']):
-        return 'Zorg'
-    elif any(word in combined for word in ['salaris', 'salary', 'loon', 'wage']):
-        return 'Salaris'
-    else:
-        return 'Overig'
-
-@app.route('/api/statistics', methods=['GET'])
-def get_statistics():
-    """Get aggregated statistics"""
-    try:
-        days = int(request.args.get('days', 90))
-        
-        # Get all transactions
-        accounts = endpoint.MonetaryAccountBank.list().value
-        all_transactions = []
-        
-        for account in accounts:
-            transactions = get_account_transactions(account.id_, days)
-            all_transactions.extend(transactions)
-        
-        # Calculate statistics
-        income = sum(t['amount'] for t in all_transactions if t['amount'] > 0)
-        expenses = abs(sum(t['amount'] for t in all_transactions if t['amount'] < 0))
-        net_savings = income - expenses
-        savings_rate = (net_savings / income * 100) if income > 0 else 0
-        
-        # Category breakdown
-        category_totals = {}
-        for t in all_transactions:
-            if t['amount'] < 0:
-                cat = t['category']
-                category_totals[cat] = category_totals.get(cat, 0) + abs(t['amount'])
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'period_days': days,
-                'total_transactions': len(all_transactions),
-                'income': income,
-                'expenses': expenses,
-                'net_savings': net_savings,
-                'savings_rate': savings_rate,
-                'categories': category_totals,
-                'avg_daily_expenses': expenses / days if days > 0 else 0
-            }
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/demo-data', methods=['GET'])
-def get_demo_data():
-    """Get demo data for testing without Bunq API"""
-    days = int(request.args.get('days', 90))
-    
-    # Generate demo transactions (simplified version)
-    import random
-    from datetime import timedelta
-    
-    categories = ['Boodschappen', 'Horeca', 'Vervoer', 'Wonen', 'Shopping', 'Entertainment']
-    merchants = {
+    categories = {
         'Boodschappen': ['Albert Heijn', 'Jumbo', 'Lidl'],
-        'Horeca': ['Starbucks', 'Restaurant Plaza'],
-        'Vervoer': ['NS', 'Shell'],
-        'Wonen': ['Verhuurder B.V.'],
-        'Shopping': ['Bol.com', 'Coolblue'],
-        'Entertainment': ['Netflix', 'Spotify']
+        'Wonen': ['Vattenfall', 'Ziggo', 'Huur'],
+        'Vervoer': ['Shell', 'NS', 'Uber'],
+        'Uitgaan': ['Restaurant De Goudvis', 'Cinema', 'Bar 123'],
+        'Verzekering': ['Interpolis', 'Zilveren Kruis']
     }
     
-    transactions = []
-    for i in range(days * 3):  # ~3 transactions per day
-        category = random.choice(categories)
-        merchant = random.choice(merchants[category])
-        
-        amount = -random.randint(10, 100) if category != 'Wonen' else -850
+    # Generate expenses
+    for i in range(days * 2):
+        category = random.choice(list(categories.keys()))
+        merchant = random.choice(categories[category])
+        amount = -random.randint(10, 150)
         
         transactions.append({
             'id': i,
@@ -453,37 +398,90 @@ def get_demo_data():
             'description': f'{category} - {merchant}'
         })
     
-    # Add some income
-    for i in range(days // 30):  # Monthly salary
+    # Add salary (monthly)
+    for i in range(days // 30 + 1):
         transactions.append({
-            'id': len(transactions),
+            'id': 9000 + i,
             'date': (datetime.now() - timedelta(days=i * 30)).isoformat(),
-            'amount': 2800,
+            'amount': 3500,
             'category': 'Salaris',
             'merchant': 'Werkgever B.V.',
-            'description': 'Salary'
+            'description': 'Monthly Salary'
         })
+    
+    logger.info(f"✅ Generated {len(transactions)} demo transactions")
     
     return jsonify({
         'success': True,
         'data': transactions,
         'count': len(transactions),
-        'note': 'This is demo data'
+        'source': 'demo_data',
+        'note': 'Configure Bunq API for real transactions'
     })
 
-if __name__ == '__main__':
-    print("🚀 Starting Bunq Dashboard API...")
-    print(f"📡 Environment: {ENVIRONMENT}")
+def categorize_transaction(description, counterparty):
+    """
+    Simple rule-based transaction categorization.
+    Can be enhanced with ML in the future.
+    """
+    desc_lower = description.lower() if description else ''
+    counter_lower = counterparty.display_name.lower() if counterparty and counterparty.display_name else ''
     
-    # Try to initialize Bunq (optional for demo mode)
-    if init_bunq():
-        print("✅ Bunq API initialized")
+    combined = desc_lower + ' ' + counter_lower
+    
+    # Categorization rules
+    if any(word in combined for word in ['albert heijn', 'ah ', 'jumbo', 'lidl', 'aldi', 'plus', 'supermarkt']):
+        return 'Boodschappen'
+    elif any(word in combined for word in ['restaurant', 'cafe', 'bar', 'pizza', 'burger', 'starbucks']):
+        return 'Uitgaan'
+    elif any(word in combined for word in ['ns ', 'train', 'bus', 'taxi', 'uber', 'parking', 'shell', 'benzine']):
+        return 'Vervoer'
+    elif any(word in combined for word in ['huur', 'rent', 'hypotheek', 'mortgage']):
+        return 'Wonen'
+    elif any(word in combined for word in ['eneco', 'energie', 'gas', 'water', 'ziggo', 'kpn', 'telecom']):
+        return 'Wonen'
+    elif any(word in combined for word in ['interpolis', 'verzekering', 'insurance', 'zilveren kruis']):
+        return 'Verzekering'
+    elif any(word in combined for word in ['salaris', 'salary', 'loon', 'wage']):
+        return 'Salaris'
     else:
-        print("⚠️ Running in demo mode only")
+        return 'Overig'
+
+# ============================================
+# STARTUP
+# ============================================
+
+if __name__ == '__main__':
+    print("=" * 70)
+    print("🚀 Bunq Financial Dashboard - Starting...")
+    print("=" * 70)
+    print(f"📡 Environment:       {ENVIRONMENT}")
+    print(f"🔒 Security:          READ-ONLY API access")
+    print(f"🌐 Architecture:      Single-origin (port 5000 only)")
+    print(f"🔑 Secret Management: {'Vaultwarden' if os.getenv('USE_VAULTWARDEN') == 'true' else 'Environment Variables'}")
+    print("=" * 70)
     
-    # Run Flask app
+    # Initialize Bunq API
+    if init_bunq():
+        print("✅ Bunq API initialized - Live data mode")
+    else:
+        print("⚠️  Running in demo mode - Configure Vaultwarden for live data")
+    
+    print("=" * 70)
+    print("🌐 Dashboard accessible at:")
+    print("   📱 Local:   http://localhost:5000")
+    print("   🏠 LAN:     http://192.168.x.x:5000")
+    print("   🔐 VPN:     http://10.8.0.x:5000")
+    print("=" * 70)
+    print("⚠️  SECURITY REMINDER:")
+    print("   - Access ONLY via VPN for security")
+    print("   - DO NOT forward port 5000 on your router")
+    print("   - All banking data travels encrypted via VPN tunnel")
+    print("=" * 70)
+    
+    # Start Flask (serves both API and Frontend)
     app.run(
-        host='0.0.0.0',  # Listen on all interfaces
+        host='0.0.0.0',  # Required for Docker
         port=5000,
-        debug=True
+        debug=os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
     )

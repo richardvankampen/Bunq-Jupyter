@@ -5,7 +5,10 @@
 
 // Global Configuration
 const CONFIG = {
-    apiEndpoint: localStorage.getItem('apiEndpoint') || 'http://localhost:5000/api',
+    // RELATIVE API endpoint - works everywhere (localhost, LAN, VPN)
+    // Browser automatically resolves to current origin
+    apiEndpoint: '/api',
+    
     refreshInterval: parseInt(localStorage.getItem('refreshInterval')) || 0,
     enableAnimations: localStorage.getItem('enableAnimations') !== 'false',
     enableParticles: localStorage.getItem('enableParticles') !== 'false',
@@ -23,6 +26,7 @@ let isLoading = false;
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('🚀 Bunq Dashboard Initializing...');
+    console.log(`📡 API Endpoint: ${CONFIG.apiEndpoint} (relative - auto-detected)`);
     
     // Initialize particles background
     if (CONFIG.enableParticles) {
@@ -32,14 +36,83 @@ document.addEventListener('DOMContentLoaded', () => {
     // Setup event listeners
     setupEventListeners();
     
-    // Load initial data (using demo data for now)
-    loadDemoData();
+    // Load data from API
+    fetchDataFromAPI();
     
     // Initialize auto-refresh if enabled
     if (CONFIG.refreshInterval > 0) {
         startAutoRefresh();
     }
 });
+
+// ============================================
+// API DATA FETCHING
+// ============================================
+
+async function fetchDataFromAPI() {
+    """
+    Fetch transactions from API.
+    Falls back to demo data if API fails.
+    """
+    showLoading();
+    
+    try {
+        console.log(`📊 Fetching transactions (${CONFIG.timeRange} days)...`);
+        
+        // Construct URL - relative path resolves automatically
+        const url = `${CONFIG.apiEndpoint}/transactions?timeRange=${CONFIG.timeRange}`;
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            transactionsData = result.data;
+            console.log(`✅ Loaded ${result.count} transactions from ${result.source || 'API'}`);
+            
+            if (result.source === 'demo_data') {
+                showDemoModeNotice();
+            }
+            
+            processAndRenderData(transactionsData);
+            updateLastUpdateTime();
+        } else {
+            throw new Error(result.error || 'Unknown API error');
+        }
+        
+    } catch (error) {
+        console.error('❌ API Error:', error);
+        console.log('⚠️ Falling back to client-side demo data...');
+        loadDemoData();
+    } finally {
+        hideLoading();
+    }
+}
+
+function showDemoModeNotice() {
+    """Show a notice that we're in demo mode"""
+    const notice = document.createElement('div');
+    notice.className = 'demo-notice';
+    notice.innerHTML = `
+        <i class="fas fa-info-circle"></i>
+        <strong>Demo Mode:</strong> Configure Bunq API for real transactions
+        <button onclick="this.parentElement.remove()">✕</button>
+    `;
+    document.body.appendChild(notice);
+}
+
+function loadDemoData() {
+    """Generate demo data on client-side as final fallback"""
+    setTimeout(() => {
+        transactionsData = generateDemoTransactions(CONFIG.timeRange);
+        processAndRenderData(transactionsData);
+        showDemoModeNotice();
+        hideLoading();
+    }, 1000);
+}
 
 // ============================================
 // EVENT LISTENERS
