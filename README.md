@@ -1,18 +1,44 @@
-# 💰 Bunq Financial Dashboard - in development, not ready for deployment yet!
+# 💰 Bunq Financial Dashboard
 
 **Spectaculaire web-based visualisaties van je Bunq transactiedata**
 
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Bunq API](https://img.shields.io/badge/Bunq-READ--ONLY-orange.svg)](https://doc.bunq.com/)
-[![Security](https://img.shields.io/badge/Security-Vaultwarden-green.svg)](https://github.com/dani-garcia/vaultwarden)
+[![Security](https://img.shields.io/badge/Security-Session--Based-green.svg)](https://github.com/dani-garcia/vaultwarden)
 
 > 🚀 Professionele, veilige financiële analytics met real-time Bunq API integratie
 > 
-> 🔒 Security-first design met Vaultwarden secret management
+> 🔒 Security-first design met session-based authentication & Vaultwarden secret management
 > 
 > 🏠 Optimized voor Synology NAS deployment
+
+⚠️ **IMPORTANT:** Access ONLY via VPN for security. NEVER forward ports to the internet!
+
+---
+
+## 🔐 Security Levels
+
+Deze repository bevat **drie implementatie-niveaus**. Kies de juiste voor jouw situatie:
+
+### 🟢 Aanbevolen: Session-Based Authentication ⭐⭐⭐⭐⭐
+- **Bestanden:** `api_proxy_session.py` + `app_session.js`
+- **Security:** HttpOnly cookies, CSRF protection, auto-expiry (24h)
+- **Voor:** Productie gebruik
+- **Guide:** [SESSION_AUTH_INSTALL.md](SESSION_AUTH_INSTALL.md)
+
+### 🟡 Basic Authentication ⭐⭐⭐⭐
+- **Bestanden:** `api_proxy_secure.py` + `app_secure.js`
+- **Security:** Username/password, rate limiting
+- **Voor:** Lokaal netwerk, simpele setup
+- **Guide:** [SECURITY_UPDATE.md](SECURITY_UPDATE.md)
+
+### 🔴 Demo/Development ⭐⭐⭐
+- **Bestanden:** `api_proxy.py` + `app.js`
+- **Security:** ❌ GEEN authenticatie
+- **Voor:** Development, testen ONLY
+- **⚠️ NOOIT** gebruiken in productie!
 
 ---
 
@@ -23,32 +49,73 @@
 - 🔄 **Real-time Data** - Direct van Bunq API (READ-ONLY)
 - 📱 **Fully Responsive** - Mobiel tot 4K
 - 🔒 **Vaultwarden Integratie** - Secrets veilig opgeslagen
+- 🔐 **Session-Based Auth** - HttpOnly cookies, CSRF protection
 - 🏠 **Synology Ready** - One-click deployment
+- 🛡️ **VPN Required** - Maximum security
 
 ---
 
-## 🏠 Synology NAS Deployment
+## 🚀 Quick Start (15 minuten)
 
-### Quick Start (15 minuten)
+### Synology NAS Deployment
 
 **Stap 1: Installeer Container Manager**
 ```
 Control Panel → Package Center → Zoek "Container Manager" → Install
 ```
 
-**Stap 2: Deploy via Deze Guide**
+**Stap 2: Setup VPN (KRITIEK voor security)**
+```
+Control Panel → Network → VPN Server → Install OpenVPN
+Volg wizard → Genereer client config → Installeer op je devices
+```
 
-Volg de complete instructies hieronder →
+**Stap 3: Deploy Dashboard**
+
+Volg de complete instructies in → [SYNOLOGY_INSTALL.md](SYNOLOGY_INSTALL.md)
+
+**Stap 4: Enable Session Authentication**
+
+Voor productie gebruik → [SESSION_AUTH_INSTALL.md](SESSION_AUTH_INSTALL.md)
 
 ---
 
-## 📚 Complete Installatie Guide
+## 🐳 Docker Deployment (Advanced)
 
-Zie [SYNOLOGY_INSTALL.md](SYNOLOGY_INSTALL.md) voor:
-- ✅ Stap-voor-stap Vaultwarden setup
-- ✅ Dashboard deployment met Docker
-- ✅ Security hardening
-- ✅ Troubleshooting guide
+```bash
+# Clone repo
+git clone https://github.com/richardvankampen/Bunq-dashboard-web.git
+cd Bunq-dashboard-web
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your settings:
+#   - FLASK_SECRET_KEY (generate with: python3 -c "import secrets; print(secrets.token_hex(32))")
+#   - BASIC_AUTH_PASSWORD (strong password!)
+#   - VAULTWARDEN credentials
+#   - Your NAS IP in ALLOWED_ORIGINS
+
+# Select authentication version (choose one):
+# Option A: Session Auth (recommended)
+cp api_proxy_session.py api_proxy.py
+cp app_session.js app.js
+
+# Option B: Basic Auth
+cp api_proxy_secure.py api_proxy.py
+cp app_secure.js app.js
+
+# Option C: Demo (development only)
+# Use existing api_proxy.py and app.js
+
+# Start containers
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f
+
+# Access dashboard (via VPN!)
+# http://your-nas-ip:5000
+```
 
 ---
 
@@ -56,14 +123,15 @@ Zie [SYNOLOGY_INSTALL.md](SYNOLOGY_INSTALL.md) voor:
 
 1. **💰 KPI Cards** - Income, Expenses, Savings
 2. **📈 Cashflow Timeline** - Interactieve tijdlijn  
-3. **🌊 Sankey Diagram** - Geldstromen
+3. **🌊 Sankey Diagram** - Geldstromen visualisatie
 4. **⭕ Sunburst Chart** - Hierarchische breakdown
 5. **🚀 3D Time-Space** - Geanimeerde tijdreis
 6. **🔥 Heatmap** - Dag-van-week patronen
 7. **🏪 Top Merchants** - Top uitgaven
 8. **🏔️ Ridge Plot** - Distributie visualisatie
 9. **🏁 Racing Bar** - Animated competitie
-10. **🎯 Insights** - Auto-calculated
+10. **🎯 Insights** - Auto-calculated insights
+11. **📊 Custom Charts** - Aanpasbare grafieken
 
 ---
 
@@ -81,66 +149,161 @@ Payment.create()            # ❌ DISABLED
 DraftPayment.create()       # ❌ DISABLED
 ```
 
-### 🔐 Vaultwarden Integration
-- API keys in encrypted vault
-- Runtime secret retrieval
-- Zero plain-text storage
-- Easy key rotation
+### 🔐 Session-Based Authentication (Aanbevolen)
+- ✅ HttpOnly cookies (JavaScript kan niet bij credentials)
+- ✅ CSRF protection (SameSite cookies)
+- ✅ Auto-expiry (24 uur)
+- ✅ Rate limiting (5 login attempts/min)
+- ✅ Constant-time password comparison
+- ✅ Server-side session management
+
+### 🛡️ Vaultwarden Integration
+- ✅ API keys in encrypted vault
+- ✅ Runtime secret retrieval
+- ✅ Zero plain-text storage
+- ✅ Easy key rotation
+- ✅ Audit logging
+
+### 🌐 VPN Requirement
+**⚠️ CRITICAL:** Access dashboard ONLY via VPN!
+
+- ✅ Never forward port 5000 on your router
+- ✅ Use Synology VPN Server (OpenVPN/L2TP)
+- ✅ Strong VPN passwords
+- ✅ Two-factor authentication where possible
 
 ---
 
-## 🐳 Docker Deployment
+## 📖 Complete Documentation
 
-```bash
-# Clone repo
-git clone https://github.com/richardvankampen/Bunq-Jupyter.git
-cd Bunq-Jupyter
-
-# Configure
-cp .env.example .env
-# Edit .env with your Vaultwarden credentials
-
-# Start
-docker-compose up -d
-
-# Open
-http://your-nas-ip:8000
-```
-
----
-
-## 📖 Documentation
-
-- [Synology Installation Guide](SYNOLOGY_INSTALL.md)
-- [Vaultwarden Setup](VAULTWARDEN_SETUP.md)
-- [Security Best Practices](SECURITY.md)
-- [Troubleshooting](TROUBLESHOOTING.md)
-- [API Documentation](API_DOCS.md)
+- **[🏠 Synology Installation Guide](SYNOLOGY_INSTALL.md)** - Complete stap-voor-stap setup
+- **[🔐 Session Authentication Guide](SESSION_AUTH_INSTALL.md)** - Upgrade naar session-based auth
+- **[🔒 Security Update Guide](SECURITY_UPDATE.md)** - Basic authentication implementatie
+- **[📋 Review Implementation](REVIEW_IMPLEMENTATION.md)** - Architectuur beslissingen
 
 ---
 
 ## 🐛 Troubleshooting
 
-**Container won't start?**
+### Container won't start?
 ```bash
-docker logs bunq-dashboard
+# Check logs
+docker-compose logs bunq-dashboard
+
+# Common fixes:
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
 ```
 
-**Vaultwarden connection failed?**
-- Check container is running
-- Verify client_id/secret correct
-- Check network connectivity
+### Vaultwarden connection failed?
+```bash
+# Test connectivity
+docker exec bunq-dashboard ping vaultwarden
 
-**Dashboard not accessible?**
-- Check firewall rules
-- Verify port 8000 not blocked
-- Check container logs
+# Check Vaultwarden running
+docker ps | grep vaultwarden
+
+# Verify credentials in .env
+cat .env | grep VAULTWARDEN
+```
+
+### Dashboard not accessible?
+1. Check VPN connection active
+2. Verify firewall rules (allow port 5000)
+3. Check container logs: `docker logs bunq-dashboard`
+4. Test health endpoint: `curl http://localhost:5000/api/health`
+
+### Authentication fails?
+```bash
+# Verify credentials in .env
+cat .env | grep BASIC_AUTH
+
+# Check Flask secret key is set (64 chars)
+cat .env | grep FLASK_SECRET_KEY
+
+# Restart container
+docker-compose restart bunq-dashboard
+```
+
+### Demo data keeps loading (no real data)?
+1. Check Bunq API key in Vaultwarden
+2. Verify `USE_VAULTWARDEN=true` in .env
+3. Check logs for Vaultwarden connection errors
+4. Enable "Use real Bunq data" in settings (if using session auth)
+
+Voor meer troubleshooting, zie de volledige installatie guides.
+
+---
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+Zie [.env.example](.env.example) voor een complete lijst met alle configuratie opties.
+
+**Kritieke variabelen:**
+- `FLASK_SECRET_KEY` - Voor session encryption (64 chars random hex)
+- `BASIC_AUTH_PASSWORD` - Dashboard login wachtwoord
+- `VAULTWARDEN_CLIENT_ID` - Voor API key retrieval
+- `VAULTWARDEN_CLIENT_SECRET` - Voor API key retrieval
+- `ALLOWED_ORIGINS` - CORS policy (je NAS IP)
+
+**Genereer secret key:**
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+---
+
+## 🔧 Development
+
+### Setup Local Development
+
+```bash
+# Clone repo
+git clone https://github.com/richardvankampen/Bunq-dashboard-web.git
+cd Bunq-dashboard-web
+
+# Install Python dependencies
+pip install -r requirements_web.txt
+
+# Run locally (demo mode)
+python api_proxy.py
+
+# Or with session auth
+python api_proxy_session.py
+
+# Access: http://localhost:5000
+```
+
+### Testing
+
+```bash
+# Test API health
+curl http://localhost:5000/api/health
+
+# Test authentication (session version)
+curl -u admin:password http://localhost:5000/api/accounts
+```
 
 ---
 
 ## 🤝 Contributing
 
-Pull requests welkom! See [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions zijn welkom! Voor nu:
+
+1. Fork het project
+2. Maak een feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit je changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push naar de branch (`git push origin feature/AmazingFeature`)
+5. Open een Pull Request
+
+**Development Guidelines:**
+- Follow existing code style
+- Add comments for complex logic
+- Test thoroughly before submitting
+- Update documentation when needed
 
 ---
 
@@ -152,10 +315,55 @@ MIT License - See [LICENSE](LICENSE)
 
 ## ⭐ Support
 
-Als je dit project nuttig vindt, geef het een ⭐!
+Als je dit project nuttig vindt:
+- Geef het een ⭐ op GitHub
+- Share met andere Bunq users
+- Contribute met verbeteringen
+
+---
+
+## 📞 Contact & Support
+
+**Voor vragen of problemen:**
+1. Check eerst de documentatie (guides hierboven)
+2. Bekijk de troubleshooting sectie
+3. Open een GitHub Issue met:
+   - Beschrijving van het probleem
+   - Log output (`docker-compose logs`)
+   - Je configuratie (zonder credentials!)
+
+**Community:**
+- GitHub Issues: [Create Issue](https://github.com/richardvankampen/Bunq-dashboard-web/issues)
+- GitHub Discussions: [Join Discussion](https://github.com/richardvankampen/Bunq-dashboard-web/discussions)
+
+---
+
+## 🎯 Roadmap
+
+Planned features:
+- [ ] Automated backups
+- [ ] Budget management
+- [ ] Multi-user support
+- [ ] Mobile app
+- [ ] Advanced analytics
+- [ ] Export functionality
+- [ ] Custom alerts
+
+---
+
+## 🙏 Acknowledgments
+
+- **Bunq** - Voor de excellent API
+- **Vaultwarden** - Voor secure secret management
+- **Synology** - Voor de stabiele NAS platform
+- **Community** - Voor feedback en contributions
 
 ---
 
 **Made with ❤️ for Bunq users**
 
 *Veilig, mooi, en production-ready!* 🚀
+
+**Version:** 2.1.0 (Session Auth)  
+**Last Updated:** February 2026  
+**Status:** ✅ Production Ready
