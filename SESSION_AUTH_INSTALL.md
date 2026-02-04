@@ -118,7 +118,7 @@ Gebruik je een aangepaste `index.html`? Zorg dan dat de login modal **VOOR de cl
 </div>
 ```
 
-**Kopieer ook de CSS** uit `login_modal.html` naar `styles.css` als je een eigen stylesheet gebruikt.
+**Kopieer ook de CSS** uit `styles.css` als je een eigen stylesheet gebruikt.
 
 ### STAP 5: Genereer Flask Secret Key
 

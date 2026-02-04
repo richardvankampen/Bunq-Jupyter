@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 STATIC_DIR = os.path.abspath(os.path.dirname(__file__))
-STATIC_FILES = {'index.html', 'styles.css', 'app.js', 'login_modal.html'}
+STATIC_FILES = {'index.html', 'styles.css', 'app.js'}
 
 # Simple in-memory cache (per process)
 CACHE_ENABLED = os.getenv('CACHE_ENABLED', 'true').lower() == 'true'

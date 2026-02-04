@@ -31,7 +31,6 @@ COPY app.js .
 # Copy static files
 COPY index.html .
 COPY styles.css .
-COPY login_modal.html .
 
 # Create directories
 RUN mkdir -p /app/config /app/logs
