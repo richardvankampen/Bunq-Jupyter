@@ -22,6 +22,9 @@
 2. Bestaande Bunq Dashboard installatie
 3. 10 minuten tijd
 
+**Let op:** Als je deze repo recent hebt gecloned (v3.0+), dan gebruik je **al** session‑based auth.  
+In dat geval kun je **Stap 2–4 overslaan** en direct naar **Stap 5 (.env)** gaan.
+
 ---
 
 ## 🚀 STAP-VOOR-STAP INSTALLATIE
@@ -131,9 +134,6 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 # Optie B: Op je laptop
 python -c "import secrets; print(secrets.token_hex(32))"
 
-# Optie C: Online (maar minder veilig)
-# Ga naar: https://randomkeygen.com/
-# Gebruik "Fort Knox Passwords" sectie
 ```
 
 **Output bijvoorbeeld:**
@@ -253,20 +253,18 @@ console.log(localStorage);
 // Je zou GEEN password of auth token moeten zien!
 ```
 
-### Test 2: Session cookie aanwezig
+### Test 2: Session cookie aanwezig (via DevTools)
 
-```javascript
-// In browser console:
-document.cookie
-// Je zou een cookie genaamd "session" moeten zien
-```
+1. Open browser DevTools → **Application/Storage** → **Cookies**
+2. Selecteer je domein
+3. Controleer of er een `session` cookie staat met **HttpOnly** aangevinkt
 
 ### Test 3: HttpOnly cookie (niet toegankelijk via JS)
 
 ```javascript
-// Dit zou NIET je session moeten tonen (security!)
+// Je zou GEEN "session" cookie moeten zien (HttpOnly)
 document.cookie
-// Output: "session=[encrypted]" of helemaal niks
+// Output: geen "session" cookie in de lijst
 ```
 
 ### Test 4: Session expiry

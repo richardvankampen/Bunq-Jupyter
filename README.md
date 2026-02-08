@@ -64,9 +64,10 @@ Volg de complete instructies in → [SYNOLOGY_INSTALL.md](SYNOLOGY_INSTALL.md)
 
 De frontend en API draaien samen op poort 5000 (`/` en `/api`).
 
-**Stap 4: Configureer Session Authentication**
+**Stap 4: (Alleen bij upgrade) Session Authentication**
 
-Volg de instructies in → [SESSION_AUTH_INSTALL.md](SESSION_AUTH_INSTALL.md)
+Gebruik je een **oude installatie** (localStorage/basic auth)? Volg dan → [SESSION_AUTH_INSTALL.md](SESSION_AUTH_INSTALL.md)  
+Nieuwe installs gebruiken dit al standaard.
 
 ---
 
@@ -87,6 +88,9 @@ cp .env.example .env
 
 # Start containers
 docker-compose up -d
+
+# Not on Synology?
+# Update bind-mount paths in docker-compose.yml to valid local paths.
 
 # Check logs
 docker-compose logs -f

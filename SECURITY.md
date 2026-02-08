@@ -21,7 +21,7 @@ Het Bunq Dashboard is ontworpen met **security-first** principes:
 | **XSS Protection** | HttpOnly cookies | ✅ Enabled |
 | **Rate Limiting** | 30 req/min + 5 login/min | ✅ Active |
 | **Session Expiry** | 24 hours | ✅ Automatic |
-| **Password Hashing** | Constant-time comparison | ✅ Implemented |
+| **Password Verification** | Constant-time comparison | ✅ Implemented |
 
 ---
 
@@ -86,7 +86,7 @@ curl http://192.168.1.100:5000
 
 **Setup:**
 ```bash
-# Use session-based auth (api_proxy_session.py)
+# Session-based auth is default (api_proxy.py)
 # See: SESSION_AUTH_INSTALL.md
 
 # Key requirements:
@@ -195,8 +195,7 @@ FLASK_SECRET_KEY=generate-64-char-hex-here
 
 # Session Settings
 SESSION_COOKIE_SECURE=true   # ⚠️ Only if using HTTPS!
-SESSION_COOKIE_HTTPONLY=true # Always true
-SESSION_COOKIE_SAMESITE=Lax  # CSRF protection
+# HttpOnly/SameSite are enforced in code (api_proxy.py)
 
 # CORS (CRITICAL)
 ALLOWED_ORIGINS=https://bunq.yourdomain.com  # YOUR domain only!
@@ -400,7 +399,7 @@ docker-compose up -d
 # In .env:
 LOG_LEVEL=INFO
 
-# In api_proxy_session.py, log important events:
+# In api_proxy.py, log important events:
 # - Failed login attempts
 # - Rate limit hits
 # - API errors

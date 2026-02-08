@@ -232,7 +232,7 @@ Vaultwarden → Account Settings → Security
 
 ### Stap 3.1: Download Project Files
 
-**Optie A: Via Git (SSH required)**
+**Optie A: Via Git (HTTPS)**
 
 ```bash
 cd /volume1/docker/bunq-dashboard

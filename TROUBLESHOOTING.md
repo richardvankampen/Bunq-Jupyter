@@ -57,7 +57,7 @@ ports:
 # Rebuild zonder cache
 docker-compose build --no-cache
 
-# Check requirements.txt bestaat
+# Check requirements_web.txt bestaat
 ls -la requirements_web.txt
 
 # Manually install dependencies in container
@@ -171,7 +171,7 @@ docker-compose restart bunq-dashboard
 # Solution: Just login again
 
 # To check session lifetime:
-grep SESSION_LIFETIME api_proxy.py
+grep PERMANENT_SESSION_LIFETIME api_proxy.py
 
 # To extend (edit api_proxy.py):
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=48)
@@ -203,8 +203,9 @@ docker-compose restart bunq-dashboard
 # Enable cookies for your domain
 # Try different browser to isolate issue
 
-# Check if cookies are set (browser console):
-document.cookie
+# Check cookies via DevTools:
+# Application/Storage → Cookies → jouw domein
+# Controleer of er een `session` cookie staat met HttpOnly aangevinkt
 ```
 
 **Voor Session Auth:**
@@ -256,10 +257,6 @@ docker-compose restart bunq-dashboard
 # Solution: Use SINGLE PORT (5000) for both frontend and API
 
 # Check docker-compose.yml only has:
-ports:
-  - "5000:5000"
-
-# NOT:
 ports:
   - "5000:5000"
 
@@ -326,9 +323,9 @@ docker exec bunq-dashboard ping vaultwarden
 
 # If fails, check network:
 docker network ls
-docker network inspect bunq-network
+docker network inspect bridge
 
-# Recreate network:
+# Recreate network (optional):
 docker-compose down
 docker-compose up -d
 ```
@@ -482,10 +479,11 @@ rate_limiter = RateLimiter(
 # Check if it's set:
 cat .env | grep FLASK_SECRET_KEY
 
-# If empty, generate and SAVE IT:
-python3 -c "import secrets; print(secrets.token_hex(32))" >> .env
+# If empty, generate:
+python3 -c "import secrets; print(secrets.token_hex(32))"
 
-# Add to .env permanently
+# Add to .env permanently:
+FLASK_SECRET_KEY=<generated-key>
 ```
 
 #### B. Browser Not Accepting Cookies
@@ -716,7 +714,7 @@ echo "
 docker exec bunq-dashboard env | grep -v SECRET | grep -v PASSWORD >> diagnostic.txt
 echo "
 === Network ===" >> diagnostic.txt
-docker network inspect bunq-network >> diagnostic.txt
+docker network inspect bridge >> diagnostic.txt
 echo "
 === Health ===" >> diagnostic.txt
 curl http://localhost:5000/api/health >> diagnostic.txt 2>&1
@@ -743,7 +741,7 @@ cat diagnostic.txt
 
 - [SYNOLOGY_INSTALL.md](SYNOLOGY_INSTALL.md) - Complete installation guide
 - [SESSION_AUTH_INSTALL.md](SESSION_AUTH_INSTALL.md) - Session auth setup
-- [SECURITY_UPDATE.md](SECURITY_UPDATE.md) - Security configuration
+- [SECURITY.md](SECURITY.md) - Security configuration
 - [README.md](README.md) - General documentation
 
 ---
