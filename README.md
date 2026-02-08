@@ -80,20 +80,31 @@ cd Bunq-dashboard-web
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your settings:
-#   - FLASK_SECRET_KEY (generate with: python3 -c "import secrets; print(secrets.token_hex(32))")
-#   - BASIC_AUTH_PASSWORD (strong password!)
-#   - VAULTWARDEN credentials
-#   - Your NAS IP in ALLOWED_ORIGINS
+# Edit .env with non-secret settings:
+#   - ALLOWED_ORIGINS (your NAS IP or domain)
+#   - VAULTWARDEN_URL / VAULTWARDEN_ITEM_NAME
+#   - USE_VAULTWARDEN / BUNQ_ENVIRONMENT
 
-# Start containers
-docker-compose up -d
+# One-time: initialize Swarm
+docker swarm init
+
+# Create Docker secrets
+printf "YourStrongPassword" | docker secret create bunq_basic_auth_password -
+python3 -c "import secrets; print(secrets.token_hex(32))" | docker secret create bunq_flask_secret_key -
+printf "user.xxxx-xxxx-xxxx-xxxx" | docker secret create bunq_vaultwarden_client_id -
+printf "your_vaultwarden_client_secret" | docker secret create bunq_vaultwarden_client_secret -
+
+# Build image
+docker build -t bunq-dashboard:local .
+
+# Deploy stack
+docker stack deploy -c docker-compose.yml bunq
 
 # Note: Vaultwarden must be running separately (see SYNOLOGY_INSTALL.md)
 # Not on Synology? Update bind-mount paths in docker-compose.yml to valid local paths.
 
 # Check logs
-docker-compose logs -f
+docker service logs -f bunq_bunq-dashboard
 
 # Access dashboard (via VPN!)
 # http://your-nas-ip:5000
@@ -177,42 +188,42 @@ DraftPayment.create()       # ❌ DISABLED
 ### Container won't start?
 ```bash
 # Check logs
-docker-compose logs bunq-dashboard
+docker service logs bunq_bunq-dashboard
 
 # Common fixes:
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
+docker build -t bunq-dashboard:local .
+docker stack deploy -c docker-compose.yml bunq
 ```
 
 ### Vaultwarden connection failed?
 ```bash
 # Test connectivity
-docker exec bunq-dashboard ping vaultwarden
+docker exec $(docker ps --filter name=bunq_bunq-dashboard -q | head -n1) ping vaultwarden
 
 # Check Vaultwarden running
 docker ps | grep vaultwarden
 
 # Verify credentials in .env
 cat .env | grep VAULTWARDEN
+docker secret ls | grep bunq_vaultwarden_client
 ```
 
 ### Dashboard not accessible?
 1. Check VPN connection active
 2. Verify firewall rules (allow port 5000)
-3. Check container logs: `docker logs bunq-dashboard`
+3. Check container logs: `docker service logs bunq_bunq-dashboard`
 4. Test health endpoint: `curl http://localhost:5000/api/health`
 
 ### Authentication fails?
 ```bash
 # Verify credentials in .env
-cat .env | grep BASIC_AUTH
+cat .env | grep BASIC_AUTH_USERNAME
 
-# Check Flask secret key is set (64 chars)
-cat .env | grep FLASK_SECRET_KEY
+# Check secrets exist
+docker secret ls | grep bunq_
 
 # Restart container
-docker-compose restart bunq-dashboard
+docker service update --force bunq_bunq-dashboard
 ```
 
 ### Demo data keeps loading (no real data)?
@@ -231,18 +242,21 @@ Voor meer troubleshooting, zie de volledige installatie guides.
 
 Zie [.env.example](.env.example) voor een complete lijst met alle configuratie opties.
 
-**Kritieke variabelen:**
-- `FLASK_SECRET_KEY` - Voor session encryption (64 chars random hex)
-- `BASIC_AUTH_PASSWORD` - Dashboard login wachtwoord
-- `VAULTWARDEN_CLIENT_ID` - Voor API key retrieval
-- `VAULTWARDEN_CLIENT_SECRET` - Voor API key retrieval
+**Kritieke Docker secrets:**
+- `bunq_flask_secret_key` - Voor session encryption (64 chars random hex)
+- `bunq_basic_auth_password` - Dashboard login wachtwoord
+- `bunq_vaultwarden_client_id` - Voor API key retrieval
+- `bunq_vaultwarden_client_secret` - Voor API key retrieval
+
+**Belangrijke .env variabelen:**
 - `ALLOWED_ORIGINS` - CORS policy (je NAS IP)
+- `USE_VAULTWARDEN` - Vaultwarden aan/uit
 - `CACHE_ENABLED` - Cache API responses (true/false)
 - `CACHE_TTL_SECONDS` - Cache TTL in seconden
 - `DEFAULT_PAGE_SIZE` / `MAX_PAGE_SIZE` - Paginatie voor transactions
 - `MAX_DAYS` - Maximale tijdsrange voor requests
 
-**Genereer secret key:**
+**Genereer secret key (voor secret):**
 ```bash
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
@@ -336,7 +350,7 @@ Als je dit project nuttig vindt:
 2. Bekijk de troubleshooting sectie
 3. Open een GitHub Issue met:
    - Beschrijving van het probleem
-   - Log output (`docker-compose logs`)
+   - Log output (`docker service logs bunq_bunq-dashboard`)
    - Je configuratie (zonder credentials!)
 
 **Community:**

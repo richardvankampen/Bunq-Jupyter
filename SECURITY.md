@@ -90,8 +90,8 @@ curl http://192.168.1.100:5000
 # See: SESSION_AUTH_INSTALL.md
 
 # Key requirements:
-1. Strong BASIC_AUTH_PASSWORD (12+ chars)
-2. Random FLASK_SECRET_KEY (64 chars hex)
+1. Secret `bunq_basic_auth_password` (12+ chars)
+2. Secret `bunq_flask_secret_key` (64 chars hex)
 3. ALLOWED_ORIGINS properly configured
 4. SESSION_COOKIE_SECURE=true if using HTTPS
 ```
@@ -140,7 +140,10 @@ openssl rand -base64 48
 **Flask Secret Key:**
 ```bash
 # Generate strong secret key (CRITICAL):
-python3 -c "import secrets; print(secrets.token_hex(32))"
+SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+
+# Create Docker secret:
+printf "%s" "$SECRET_KEY" | docker secret create bunq_flask_secret_key -
 
 # Output example (DO NOT USE THIS):
 # a3f8b9c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
@@ -156,7 +159,10 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 **Dashboard Password:**
 ```bash
 # Generate strong password:
-openssl rand -base64 32
+DASHBOARD_PASSWORD=$(openssl rand -base64 32)
+
+# Create Docker secret:
+printf "%s" "$DASHBOARD_PASSWORD" | docker secret create bunq_basic_auth_password -
 
 # Or use passphrase (easier to remember):
 # Example: "Bunq-Dashboard-2026-Super-Secure!"
@@ -181,17 +187,15 @@ openssl rand -base64 32
 
 ## 🔧 Security Configuration
 
-### Recommended .env Settings
+### Recommended .env + Secrets Settings
 
 ```bash
 # ============================================
 # PRODUCTION SECURITY CONFIGURATION
 # ============================================
 
-# Session Authentication
+# Session Authentication (non-secret)
 BASIC_AUTH_USERNAME=admin
-BASIC_AUTH_PASSWORD=generate-strong-password-here
-FLASK_SECRET_KEY=generate-64-char-hex-here
 
 # Session Settings
 SESSION_COOKIE_SECURE=true   # ⚠️ Only if using HTTPS!
@@ -202,8 +206,6 @@ ALLOWED_ORIGINS=https://bunq.yourdomain.com  # YOUR domain only!
 
 # Vaultwarden
 USE_VAULTWARDEN=true         # Always use Vaultwarden
-VAULTWARDEN_CLIENT_ID=user.xxx-xxx-xxx
-VAULTWARDEN_CLIENT_SECRET=your-secret-here
 
 # Bunq
 BUNQ_ENVIRONMENT=PRODUCTION  # For real banking data
@@ -211,6 +213,13 @@ BUNQ_ENVIRONMENT=PRODUCTION  # For real banking data
 # Application
 FLASK_DEBUG=false            # NEVER true in production!
 LOG_LEVEL=INFO              # Or WARNING for production
+
+# Docker Swarm secrets (create separately)
+# - bunq_basic_auth_password
+# - bunq_flask_secret_key
+# - bunq_vaultwarden_client_id
+# - bunq_vaultwarden_client_secret
+# - bunq_api_key (only if USE_VAULTWARDEN=false)
 ```
 
 ---
@@ -331,7 +340,7 @@ SESSION_COOKIE_SECURE=true
 ALLOWED_ORIGINS=https://bunq.yourdomain.com
 
 # Restart dashboard:
-docker-compose restart bunq-dashboard
+docker service update --force bunq_bunq-dashboard
 ```
 
 ---
@@ -343,7 +352,7 @@ docker-compose restart bunq-dashboard
 **Monthly:**
 ```bash
 # 1. Check for unauthorized access attempts
-docker logs bunq-dashboard | grep "Unauthorized" | tail -20
+docker service logs bunq_bunq-dashboard | grep "Unauthorized" | tail -20
 
 # 2. Review active sessions (if implemented)
 # Check Vaultwarden access logs
@@ -362,7 +371,7 @@ ls -lh /volume1/docker/bunq-dashboard/backups/
 **Quarterly:**
 ```bash
 # 1. Rotate passwords
-# - BASIC_AUTH_PASSWORD
+# - bunq_basic_auth_password
 # - Vaultwarden master password (if needed)
 
 # 2. Update Bunq API key (optional)
@@ -371,9 +380,8 @@ ls -lh /volume1/docker/bunq-dashboard/backups/
 # - Test dashboard still works
 
 # 3. Review and update packages
-docker-compose pull
-docker-compose build --no-cache
-docker-compose up -d
+docker build -t bunq-dashboard:local .
+docker stack deploy -c docker-compose.yml bunq
 
 # 4. Security audit
 # - Review access logs
@@ -384,7 +392,7 @@ docker-compose up -d
 **Annually:**
 ```bash
 # 1. Full security review
-# 2. Rotate all credentials (including FLASK_SECRET_KEY)
+# 2. Rotate all credentials (including bunq_flask_secret_key)
 # 3. Update all Docker images
 # 4. Test disaster recovery (restore from backup)
 # 5. Review and update security policies
@@ -409,13 +417,13 @@ LOG_LEVEL=INFO
 **Monitor logs:**
 ```bash
 # Real-time monitoring
-docker logs -f bunq-dashboard | grep -E "(WARN|ERROR|Unauthorized)"
+docker service logs -f bunq_bunq-dashboard | grep -E "(WARN|ERROR|Unauthorized)"
 
 # Failed login attempts
-docker logs bunq-dashboard | grep "Login failed" | wc -l
+docker service logs bunq_bunq-dashboard | grep "Login failed" | wc -l
 
 # Rate limit hits
-docker logs bunq-dashboard | grep "Rate limit" | wc -l
+docker service logs bunq_bunq-dashboard | grep "Rate limit" | wc -l
 
 # Set up alerts (example with Synology)
 Control Panel → Notification → Email
@@ -431,16 +439,16 @@ Control Panel → Notification → Email
 **Immediate Actions:**
 ```bash
 # 1. BLOCK ACCESS IMMEDIATELY
-docker-compose down
+docker stack rm bunq
 
 # 2. Change all credentials
 # - Vaultwarden master password
-# - BASIC_AUTH_PASSWORD
-# - FLASK_SECRET_KEY (invalidates all sessions)
+# - bunq_basic_auth_password
+# - bunq_flask_secret_key (invalidates all sessions)
 # - Bunq API key (in Bunq app)
 
 # 3. Review logs for breach
-docker logs bunq-dashboard > incident-$(date +%Y%m%d).log
+docker service logs bunq_bunq-dashboard > incident-$(date +%Y%m%d).log
 
 # 4. Check Bunq transactions
 # Open Bunq app → Review all recent transactions
@@ -448,8 +456,8 @@ docker logs bunq-dashboard > incident-$(date +%Y%m%d).log
 # (Remember: Dashboard is READ-ONLY, cannot create transactions)
 
 # 5. Restart with new credentials
-# Update .env with new credentials
-docker-compose up -d
+# Update Docker secrets / .env, then redeploy
+docker stack deploy -c docker-compose.yml bunq
 
 # 6. Report incident (if needed)
 # Contact Bunq support if unauthorized transactions found
@@ -466,7 +474,7 @@ sudo tar -czf bunq-dashboard-backup-$(date +%Y%m%d).tar.gz \
     /volume1/docker/bunq-dashboard
 
 # 3. Complete reinstall
-docker-compose down -v  # Remove volumes
+docker stack rm bunq  # Stop stack
 rm -rf /volume1/docker/bunq-dashboard/*
 # Re-deploy following SYNOLOGY_INSTALL.md
 
@@ -493,8 +501,8 @@ rm -rf /volume1/docker/bunq-dashboard/*
 - [ ] Vaultwarden signups disabled (`SIGNUPS_ALLOWED=false`)
 - [ ] Bunq API key stored in Vaultwarden (not in .env)
 - [ ] Session-based auth configured
-- [ ] Strong `FLASK_SECRET_KEY` generated (64 chars)
-- [ ] Strong `BASIC_AUTH_PASSWORD` set (12+ chars)
+- [ ] Secret `bunq_flask_secret_key` created (64 chars)
+- [ ] Secret `bunq_basic_auth_password` set (12+ chars)
 - [ ] `ALLOWED_ORIGINS` set to specific domain/IP
 - [ ] `FLASK_DEBUG=false` in production
 - [ ] HTTPS configured (if using reverse proxy)

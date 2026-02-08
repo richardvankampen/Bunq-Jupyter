@@ -261,32 +261,23 @@ sudo mkdir -p /volume1/docker/bunq-dashboard/config
 sudo mkdir -p /volume1/docker/bunq-dashboard/logs
 ```
 
-### Stap 3.3: Configureer Environment
+### Stap 3.3: Configureer Environment (.env)
 
-Maak `/volume1/docker/bunq-dashboard/.env`.
+Maak `/volume1/docker/bunq-dashboard/.env` met **niet‑gevoelige** settings.
 
-**Verplicht (moet ingevuld zijn):**
+**Verplicht (.env):**
 
-| Variabele | Betekenis | Aanbevolen waarde |
+| Variabele | Betekenis | Aanbevolen/default waarde |
 |---|---|---|
 | `BASIC_AUTH_USERNAME` | Inlog gebruikersnaam voor het dashboard | `admin` (of eigen keuze) |
-| `BASIC_AUTH_PASSWORD` | Inlog wachtwoord (vereist; anders kan niemand inloggen) | Sterk wachtwoord (min 12+ tekens) |
-| `FLASK_SECRET_KEY` | Sessie‑encryptie sleutel (blijvend) | Genereer 64 hex chars: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `VAULTWARDEN_URL` | Interne URL van Vaultwarden container | `http://vaultwarden:80` |
-| `VAULTWARDEN_CLIENT_ID` | OAuth client_id uit Vaultwarden | Waarde uit stap 2.6 |
-| `VAULTWARDEN_CLIENT_SECRET` | OAuth client_secret uit Vaultwarden | Waarde uit stap 2.6 |
 | `VAULTWARDEN_ITEM_NAME` | Naam van het Vault item met je Bunq API key | `Bunq API Key` |
 | `USE_VAULTWARDEN` | Gebruik Vaultwarden i.p.v. directe API key | `true` |
 | `BUNQ_ENVIRONMENT` | Bunq omgeving | `PRODUCTION` (of `SANDBOX` voor test) |
-
-**Sterk aanbevolen (voorkomt CORS/HTTPS problemen):**
-
-| Variabele | Betekenis | Aanbevolen waarde |
-|---|---|---|
 | `ALLOWED_ORIGINS` | Toegestane frontend origins voor CORS | `http://<NAS-IP>:5000` (eventueel meerdere, komma‑gescheiden) |
 | `SESSION_COOKIE_SECURE` | Alleen veilige cookies via HTTPS | `false` voor HTTP, `true` als je HTTPS/reverse proxy gebruikt |
 
-**Optioneel (heeft defaults):**
+**Optioneel (.env):**
 
 | Variabele | Betekenis | Aanbevolen/default waarde |
 |---|---|---|
@@ -301,33 +292,54 @@ Maak `/volume1/docker/bunq-dashboard/.env`.
 **Voorbeeld minimale `.env`:**
 
 ```bash
-# SECURITY (verplicht)
 BASIC_AUTH_USERNAME=admin
-BASIC_AUTH_PASSWORD=KiesEenSterkWachtwoord
-FLASK_SECRET_KEY=genereer_een_random_key_hier_64_characters_lang
-
-# CORS (aanbevolen)
-ALLOWED_ORIGINS=http://192.168.1.100:5000
-SESSION_COOKIE_SECURE=false
-
-# VAULTWARDEN (verplicht)
 VAULTWARDEN_URL=http://vaultwarden:80
-VAULTWARDEN_CLIENT_ID=user.xxxx-xxxx-xxxx-xxxx
-VAULTWARDEN_CLIENT_SECRET=your_client_secret_here
 VAULTWARDEN_ITEM_NAME=Bunq API Key
 USE_VAULTWARDEN=true
-
-# BUNQ (verplicht)
 BUNQ_ENVIRONMENT=PRODUCTION
-
-# OPTIONEEL
+ALLOWED_ORIGINS=http://192.168.1.100:5000
+SESSION_COOKIE_SECURE=false
 LOG_LEVEL=INFO
 FLASK_DEBUG=false
 ```
 
-⚠️ **BELANGRIJK**: Vervang `CLIENT_ID` en `CLIENT_SECRET` met jouw waarden van stap 2.6!
+### Stap 3.4: Maak Docker secrets (verplicht)
 
-### Stap 3.4: Update docker-compose.yml
+Gevoelige waarden **mogen niet in `.env`**. Maak ze als Docker Swarm secrets.
+
+**Eenmalig (Swarm activeren):**
+```bash
+sudo docker swarm init
+# Als je een melding krijgt dat dit al actief is: negeren.
+```
+
+**Verplicht (Docker secrets):**
+
+| Secret naam | Betekenis | Aanbevolen waarde |
+|---|---|---|
+| `bunq_basic_auth_password` | Dashboard wachtwoord | Sterk wachtwoord (min 12+ tekens) |
+| `bunq_flask_secret_key` | Sessie‑encryptie sleutel | Genereer 64 hex chars: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `bunq_vaultwarden_client_id` | OAuth client_id uit Vaultwarden | Waarde uit stap 2.6 |
+| `bunq_vaultwarden_client_secret` | OAuth client_secret uit Vaultwarden | Waarde uit stap 2.6 |
+
+**Optioneel (alleen als `USE_VAULTWARDEN=false`):**
+
+| Secret naam | Betekenis | Aanbevolen waarde |
+|---|---|---|
+| `bunq_api_key` | Bunq API key (direct) | Alleen gebruiken als je geen Vaultwarden gebruikt |
+
+**Secrets aanmaken:**
+```bash
+printf "JouwSterkeWachtwoord" | sudo docker secret create bunq_basic_auth_password -
+python3 -c "import secrets; print(secrets.token_hex(32))" | sudo docker secret create bunq_flask_secret_key -
+printf "user.xxxx-xxxx-xxxx-xxxx" | sudo docker secret create bunq_vaultwarden_client_id -
+printf "jouw_vaultwarden_client_secret" | sudo docker secret create bunq_vaultwarden_client_secret -
+
+# Alleen als USE_VAULTWARDEN=false:
+# printf "jouw_bunq_api_key" | sudo docker secret create bunq_api_key -
+```
+
+### Stap 3.5: Update docker-compose.yml
 
 Maak/Edit `/volume1/docker/bunq-dashboard/docker-compose.yml`:
 
@@ -336,16 +348,42 @@ version: '3.8'
 
 services:
   bunq-dashboard:
+    image: bunq-dashboard:local
     build: .
     container_name: bunq-dashboard
     restart: unless-stopped
     
     ports:
       - "5000:5000"  # Dashboard + API
-    
-    # Load all settings from .env
-    env_file:
-      - .env
+
+    environment:
+      BASIC_AUTH_USERNAME: "${BASIC_AUTH_USERNAME:-admin}"
+      VAULTWARDEN_URL: "${VAULTWARDEN_URL:-http://vaultwarden:80}"
+      VAULTWARDEN_ITEM_NAME: "${VAULTWARDEN_ITEM_NAME:-Bunq API Key}"
+      USE_VAULTWARDEN: "${USE_VAULTWARDEN:-true}"
+      BUNQ_ENVIRONMENT: "${BUNQ_ENVIRONMENT:-PRODUCTION}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:5000}"
+      SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+      FLASK_DEBUG: "${FLASK_DEBUG:-false}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      CACHE_ENABLED: "${CACHE_ENABLED:-true}"
+      CACHE_TTL_SECONDS: "${CACHE_TTL_SECONDS:-60}"
+      DEFAULT_PAGE_SIZE: "${DEFAULT_PAGE_SIZE:-500}"
+      MAX_PAGE_SIZE: "${MAX_PAGE_SIZE:-2000}"
+      MAX_DAYS: "${MAX_DAYS:-3650}"
+
+    secrets:
+      - source: bunq_basic_auth_password
+        target: basic_auth_password
+      - source: bunq_flask_secret_key
+        target: flask_secret_key
+      - source: bunq_vaultwarden_client_id
+        target: vaultwarden_client_id
+      - source: bunq_vaultwarden_client_secret
+        target: vaultwarden_client_secret
+      # Optional: only when USE_VAULTWARDEN=false
+      # - source: bunq_api_key
+      #   target: bunq_api_key
     
     volumes:
       - /volume1/docker/bunq-dashboard/config:/app/config
@@ -364,28 +402,41 @@ services:
 networks:
   bridge:
     external: true
+
+secrets:
+  bunq_basic_auth_password:
+    external: true
+  bunq_flask_secret_key:
+    external: true
+  bunq_vaultwarden_client_id:
+    external: true
+  bunq_vaultwarden_client_secret:
+    external: true
+  # Optional: only when USE_VAULTWARDEN=false
+  # bunq_api_key:
+  #   external: true
 ```
 
 **Let op:** Zorg dat de Vaultwarden container uit Deel 2 op hetzelfde `bridge` netwerk draait (standaard in Synology).
 
-### Stap 3.5: Vaultwarden Integratie (al ingebouwd)
+### Stap 3.6: Vaultwarden Integratie (al ingebouwd)
 
 De `api_proxy.py` bevat standaard Vaultwarden-integratie. Zorg alleen dat je
 `.env` correct is ingevuld (zoals in stap 3.3) en dat `USE_VAULTWARDEN=true` staat.
 
-### Stap 3.6: Build en Start
+### Stap 3.7: Build en Start
 
 ```bash
 cd /volume1/docker/bunq-dashboard
 
 # Build image
-sudo docker-compose build
+sudo docker build -t bunq-dashboard:local .
 
-# Start services
-sudo docker-compose up -d
+# Deploy stack (Swarm)
+sudo docker stack deploy -c docker-compose.yml bunq
 
 # Check logs
-sudo docker-compose logs -f
+sudo docker service logs -f bunq_bunq-dashboard
 ```
 
 Je zou moeten zien:
@@ -397,7 +448,7 @@ Je zou moeten zien:
 ✅ Dashboard running on http://0.0.0.0:5000
 ```
 
-### Stap 3.7: Open Dashboard
+### Stap 3.8: Open Dashboard
 
 Browser: `http://192.168.1.100:5000`
 
@@ -468,21 +519,16 @@ Package Center → Container Manager → Settings
 ### Updates
 
 ```bash
-# Stop containers
 cd /volume1/docker/bunq-dashboard
-sudo docker-compose down
 
-# Pull latest images
-sudo docker-compose pull
+# Rebuild image
+sudo docker build -t bunq-dashboard:local .
 
-# Rebuild
-sudo docker-compose build --no-cache
-
-# Start
-sudo docker-compose up -d
+# Redeploy stack
+sudo docker stack deploy -c docker-compose.yml bunq
 
 # Verify
-sudo docker-compose ps
+sudo docker stack ps bunq
 ```
 
 ### Backup Vaultwarden
@@ -499,21 +545,17 @@ sudo mv vaultwarden-backup-*.tar.gz /volume1/backups/
 
 ```bash
 # Dashboard logs
-sudo docker logs bunq-dashboard
+sudo docker service logs -f bunq_bunq-dashboard
 
 # Vaultwarden logs
 sudo docker logs vaultwarden
-
-# Or via docker-compose
-cd /volume1/docker/bunq-dashboard
-sudo docker-compose logs -f
 ```
 
 ### Rotate Bunq API Key
 
 1. Generate new key in Bunq app
 2. Update in Vaultwarden (web interface)
-3. Restart dashboard: `sudo docker-compose restart`
+3. Restart dashboard: `sudo docker service update --force bunq_bunq-dashboard`
 
 No code changes needed! ✨
 
@@ -525,18 +567,17 @@ No code changes needed! ✨
 
 ```bash
 # Check logs
-sudo docker logs bunq-dashboard
+sudo docker service logs bunq_bunq-dashboard
 
 # Common fixes:
-sudo docker-compose down
-sudo docker-compose up -d --force-recreate
+sudo docker service update --force bunq_bunq-dashboard
 ```
 
 ### Vaultwarden connection failed
 
 ```bash
 # Test connectivity
-sudo docker exec bunq-dashboard ping vaultwarden
+sudo docker exec $(sudo docker ps --filter name=bunq_bunq-dashboard -q | head -n1) ping vaultwarden
 
 # Check vaultwarden running
 sudo docker ps | grep vaultwarden
@@ -550,7 +591,7 @@ sudo docker restart vaultwarden
 1. Login Vaultwarden web UI
 2. Verify item name exact: "Bunq API Key"
 3. Check password field filled
-4. Verify client_id/secret correct in .env
+4. Verify client_id/secret secrets exist: `sudo docker secret ls | grep bunq_vaultwarden_client`
 
 ### Port already in use
 

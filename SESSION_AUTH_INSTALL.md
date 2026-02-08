@@ -50,7 +50,7 @@ cp .env .env.OLD
 **Controleer of het bestand deze imports heeft:**
 ```python
 from flask import session, make_response
-app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', ...)
+app.config['SECRET_KEY'] = get_config('FLASK_SECRET_KEY', ..., 'flask_secret_key')
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 ```
 
@@ -143,21 +143,17 @@ a3f8b9c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
 
 **Kopieer deze key!** Je hebt hem nodig in de volgende stap.
 
-### STAP 6: Update .env bestand
+### STAP 6: Update .env bestand (niet‑gevoelig)
 
 ```bash
 nano /volume1/docker/bunq-dashboard/.env
 ```
 
-**Voeg toe / update:**
+**Voeg toe / update (geen secrets):**
 
 ```bash
-# Login credentials (zoals eerder)
+# Login username (wachtwoord via Docker secret)
 BASIC_AUTH_USERNAME=admin
-BASIC_AUTH_PASSWORD=JouwSterkeWachtwoord123!
-
-# 🆕 NIEUW: Flask Secret Key
-FLASK_SECRET_KEY=a3f8b9c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
 
 # Session cookie settings
 # Set to 'true' als je HTTPS gebruikt
@@ -172,27 +168,38 @@ BUNQ_ENVIRONMENT=PRODUCTION
 # etc.
 ```
 
+### STAP 6b: Maak Docker secrets (verplicht)
+
+```bash
+# Eenmalig (Swarm activeren)
+sudo docker swarm init
+# Als je een melding krijgt dat dit al actief is: negeren.
+
+# Wachtwoord voor dashboard login
+printf "JouwSterkeWachtwoord123!" | sudo docker secret create bunq_basic_auth_password -
+
+# Flask Secret Key (uit stap 5)
+printf "a3f8b9c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1" | sudo docker secret create bunq_flask_secret_key -
+```
+
 **⚠️ KRITIEK:**
-- `FLASK_SECRET_KEY` moet **uniek** en **random** zijn
+- `bunq_flask_secret_key` moet **uniek** en **random** zijn
 - **Bewaar deze key veilig** - als je hem kwijt bent, worden alle sessies ongeldig
 - **Verander hem NIET** tenzij je alle users wilt uitloggen
 
-### STAP 7: Rebuild en Restart
+### STAP 7: Rebuild en Restart (Swarm)
 
 ```bash
 cd /volume1/docker/bunq-dashboard
 
-# Stop containers
-sudo docker-compose down
+# Rebuild image
+sudo docker build -t bunq-dashboard:local .
 
-# Rebuild (met nieuwe code)
-sudo docker-compose build --no-cache
-
-# Start
-sudo docker-compose up -d
+# Deploy stack
+sudo docker stack deploy -c docker-compose.yml bunq
 
 # Check logs
-sudo docker-compose logs -f bunq-dashboard
+sudo docker service logs -f bunq_bunq-dashboard
 ```
 
 **Je zou moeten zien:**
@@ -271,11 +278,11 @@ document.cookie
 
 ```bash
 # Check logs na 24 uur:
-sudo docker logs bunq-dashboard | grep "expired"
+sudo docker service logs bunq_bunq-dashboard | grep "expired"
 
-# Of forceer expiry door secret key te wijzigen:
-# 1. Wijzig FLASK_SECRET_KEY in .env
-# 2. Restart container
+# Of forceer expiry door secret key te roteren:
+# 1. Update `bunq_flask_secret_key` secret
+# 2. Redeploy stack
 # 3. Probeer API call → moet 401 geven
 ```
 
@@ -370,19 +377,18 @@ max_reqs = 5 if endpoint == 'login' else self.max_requests  # Login limiet
 
 ### Probleem: "Session expired" direct na login
 
-**Oorzaak:** FLASK_SECRET_KEY niet ingesteld of wijzigt bij restart
+**Oorzaak:** `bunq_flask_secret_key` secret ontbreekt of wijzigt bij restart
 
 **Oplossing:**
 ```bash
-# Check .env:
-cat .env | grep FLASK_SECRET_KEY
+# Check secrets:
+docker secret ls | grep bunq_flask_secret_key
 
-# Als leeg of niet aanwezig:
-python3 -c "import secrets; print(secrets.token_hex(32))"
-# Voeg output toe aan .env als FLASK_SECRET_KEY=...
+# Als ontbreekt:
+python3 -c "import secrets; print(secrets.token_hex(32))" | sudo docker secret create bunq_flask_secret_key -
 
-# Herstart:
-docker-compose restart
+# Redeploy:
+docker stack deploy -c docker-compose.yml bunq
 ```
 
 ### Probleem: "CORS error" na update
@@ -395,7 +401,7 @@ docker-compose restart
 ALLOWED_ORIGINS=http://192.168.1.100:5000
 
 # Herstart:
-docker-compose restart
+docker service update --force bunq_bunq-dashboard
 ```
 
 ### Probleem: Login modal verschijnt niet
@@ -422,7 +428,7 @@ document.getElementById('loginModal')
 ```bash
 # Optie 1: Wacht 60 seconden
 # Optie 2: Herstart container (reset rate limiter):
-docker-compose restart
+docker service update --force bunq_bunq-dashboard
 
 # Optie 3: Verhoog limiet in code (niet aanbevolen)
 ```
@@ -463,8 +469,8 @@ docker-compose restart
 
 Na installatie, controleer:
 
-- [ ] `FLASK_SECRET_KEY` ingesteld in `.env` (64 chars random)
-- [ ] `BASIC_AUTH_PASSWORD` is sterk (min. 12 chars)
+- [ ] Secret `bunq_flask_secret_key` aangemaakt (64 chars random)
+- [ ] Secret `bunq_basic_auth_password` is sterk (min. 12 chars)
 - [ ] `ALLOWED_ORIGINS` bevat je NAS IP/domein
 - [ ] Login modal verschijnt bij klikken login button
 - [ ] Login werkt met correcte credentials
@@ -497,7 +503,7 @@ Je Bunq Dashboard gebruikt nu **session-based authentication**!
 ## 📞 Support
 
 Bij problemen:
-1. Check de logs: `docker-compose logs -f`
+1. Check de logs: `docker service logs -f bunq_bunq-dashboard`
 2. Verify .env settings
 3. Test in verschillende browser
 4. Open GitHub issue met logs

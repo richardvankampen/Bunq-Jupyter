@@ -38,6 +38,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================
+# SECRET HELPERS (Docker Swarm secrets)
+# ============================================
+
+def read_secret(name):
+    path = f"/run/secrets/{name}"
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            return file.read().strip()
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed to read secret '{name}': {exc}")
+        return None
+
+def get_config(key, default=None, secret_name=None):
+    if secret_name:
+        secret_value = read_secret(secret_name)
+        if secret_value:
+            return secret_value
+    env_value = os.getenv(key)
+    if env_value is not None and env_value != "":
+        return env_value
+    return default
+
+def has_config(key, secret_name=None):
+    if secret_name and read_secret(secret_name):
+        return True
+    return bool(os.getenv(key))
+
+# ============================================
 # FLASK APP INITIALIZATION
 # ============================================
 
@@ -58,7 +88,7 @@ cache = Cache(app, config={
 })
 
 # Session configuration - CRITICAL for security
-app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
+app.config['SECRET_KEY'] = get_config('FLASK_SECRET_KEY', secrets.token_hex(32), 'flask_secret_key')
 app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevents JavaScript access
 app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'  # HTTPS only
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF protection
@@ -88,11 +118,11 @@ def check_credentials(username, password):
     Uses constant-time comparison to prevent timing attacks.
     """
     expected_username = os.getenv('BASIC_AUTH_USERNAME', 'admin')
-    expected_password = os.getenv('BASIC_AUTH_PASSWORD', '')
+    expected_password = get_config('BASIC_AUTH_PASSWORD', '', 'basic_auth_password')
     
     # If no password set, deny all access
     if not expected_password:
-        logger.error("❌ No BASIC_AUTH_PASSWORD set in environment!")
+        logger.error("❌ No BASIC_AUTH_PASSWORD set (env or secret)!")
         return False
     
     # Constant-time comparison to prevent timing attacks
@@ -364,21 +394,21 @@ def get_api_key_from_vaultwarden():
     use_vaultwarden = os.getenv('USE_VAULTWARDEN', 'false').lower() == 'true'
     
     if not use_vaultwarden:
-        logger.info("📝 Vaultwarden disabled, using environment variable")
-        api_key = os.getenv('BUNQ_API_KEY', '')
+        logger.info("📝 Vaultwarden disabled, using direct API key (env or secret)")
+        api_key = get_config('BUNQ_API_KEY', '', 'bunq_api_key')
         if api_key:
-            logger.info("✅ API key loaded from environment")
+            logger.info("✅ API key loaded from env/secret")
         return api_key
     
     logger.info("🔐 Retrieving API key from Vaultwarden vault...")
     
     vault_url = os.getenv('VAULTWARDEN_URL', 'http://vaultwarden:80')
-    client_id = os.getenv('VAULTWARDEN_CLIENT_ID')
-    client_secret = os.getenv('VAULTWARDEN_CLIENT_SECRET')
+    client_id = get_config('VAULTWARDEN_CLIENT_ID', None, 'vaultwarden_client_id')
+    client_secret = get_config('VAULTWARDEN_CLIENT_SECRET', None, 'vaultwarden_client_secret')
     item_name = os.getenv('VAULTWARDEN_ITEM_NAME', 'Bunq API Key')
     
     if not client_id or not client_secret:
-        logger.error("❌ Vaultwarden credentials missing in environment!")
+        logger.error("❌ Vaultwarden credentials missing (env or secret)!")
         return None
     
     try:
@@ -439,13 +469,13 @@ ENVIRONMENT = os.getenv('BUNQ_ENVIRONMENT', 'PRODUCTION')
 if not API_KEY:
     logger.error("❌ No valid API key found!")
 
-if not os.getenv('BASIC_AUTH_PASSWORD'):
+if not has_config('BASIC_AUTH_PASSWORD', 'basic_auth_password'):
     logger.error("⚠️⚠️⚠️ WARNING: No BASIC_AUTH_PASSWORD set!")
     logger.error("⚠️ Authentication is NOT configured!")
 
-if not os.getenv('FLASK_SECRET_KEY'):
+if not has_config('FLASK_SECRET_KEY', 'flask_secret_key'):
     logger.warning("⚠️ Using auto-generated FLASK_SECRET_KEY - sessions will reset on restart!")
-    logger.warning("⚠️ Set FLASK_SECRET_KEY in .env for persistent sessions")
+    logger.warning("⚠️ Set FLASK_SECRET_KEY via Docker secret for persistent sessions")
 
 # ============================================
 # BUNQ API INITIALIZATION
@@ -511,7 +541,7 @@ def health_check():
             'rate_limiting': True,
             'https_only': app.config['SESSION_COOKIE_SECURE']
         },
-        'auth_configured': bool(os.getenv('BASIC_AUTH_PASSWORD'))
+        'auth_configured': has_config('BASIC_AUTH_PASSWORD', 'basic_auth_password')
     })
 
 @app.route('/api/accounts', methods=['GET'])
@@ -847,10 +877,10 @@ if __name__ == '__main__':
     print("🚀 Starting Bunq Dashboard API (SESSION-BASED AUTH)...")
     print(f"📡 Environment: {ENVIRONMENT}")
     print(f"🔒 CORS Origins: {ALLOWED_ORIGINS}")
-    print(f"🔐 Authentication: {'ENABLED ✅' if os.getenv('BASIC_AUTH_PASSWORD') else 'DISABLED ⚠️'}")
+    print(f"🔐 Authentication: {'ENABLED ✅' if has_config('BASIC_AUTH_PASSWORD', 'basic_auth_password') else 'DISABLED ⚠️'}")
     print(f"🍪 Session-based auth with secure cookies")
     print(f"⏱️  Rate Limiting: 30 req/min (general), 5 req/min (login)")
-    print(f"🔑 Secret key: {'Set ✅' if os.getenv('FLASK_SECRET_KEY') else 'Auto-generated ⚠️'}")
+    print(f"🔑 Secret key: {'Set ✅' if has_config('FLASK_SECRET_KEY', 'flask_secret_key') else 'Auto-generated ⚠️'}")
     
     if init_bunq():
         print("✅ Bunq API initialized")

@@ -12,11 +12,15 @@ Comprehensive troubleshooting guide voor alle bekende problemen en hun oplossing
 Start hier als je niet zeker weet wat het probleem is:
 
 ```bash
+# Swarm stack name: bunq (pas aan als je een andere naam gebruikt)
 # Check if containers are running
 docker ps
 
+# Swarm convenience: get the running task container id
+BUNQ_CONTAINER=$(docker ps --filter name=bunq_bunq-dashboard -q | head -n1)
+
 # Check container logs
-docker-compose logs bunq-dashboard
+docker service logs bunq_bunq-dashboard
 docker logs vaultwarden
 
 # Check API health
@@ -24,6 +28,7 @@ curl http://localhost:5000/api/health
 
 # Check environment variables
 cat .env | grep -v SECRET | grep -v PASSWORD
+docker secret ls | grep bunq_
 ```
 
 ---
@@ -35,7 +40,7 @@ cat .env | grep -v SECRET | grep -v PASSWORD
 **Symptomen:**
 - Container stopt direct na start
 - `docker ps` toont geen bunq-dashboard
-- Error in logs bij `docker-compose up`
+- Error in logs bij `docker stack deploy`
 
 **Mogelijke Oorzaken & Oplossingen:**
 
@@ -55,13 +60,13 @@ ports:
 #### B. Missing Dependencies
 ```bash
 # Rebuild zonder cache
-docker-compose build --no-cache
+docker build -t bunq-dashboard:local .
 
 # Check requirements_web.txt bestaat
 ls -la requirements_web.txt
 
 # Manually install dependencies in container
-docker exec -it bunq-dashboard pip install -r requirements_web.txt
+docker exec -it "$BUNQ_CONTAINER" pip install -r requirements_web.txt
 ```
 
 #### C. Permission Issues
@@ -71,17 +76,17 @@ sudo chown -R $(whoami) /volume1/docker/bunq-dashboard
 sudo chmod -R 755 /volume1/docker/bunq-dashboard
 
 # Recreate containers
-docker-compose down
-docker-compose up -d --force-recreate
+docker stack rm bunq
+docker service update --force bunq_bunq-dashboard
 ```
 
 #### D. Syntax Error in Code
 ```bash
 # Check Python syntax
-docker exec bunq-dashboard python -m py_compile api_proxy.py
+docker exec "$BUNQ_CONTAINER" python -m py_compile api_proxy.py
 
 # Check logs for specific error
-docker logs bunq-dashboard 2>&1 | grep -i error
+docker service logs bunq_bunq-dashboard 2>&1 | grep -i error
 ```
 
 ---
@@ -101,10 +106,10 @@ docker logs bunq-dashboard 2>&1 | grep -i error
 docker ps | grep bunq-dashboard
 
 # If not running, check why:
-docker logs bunq-dashboard
+docker service logs bunq_bunq-dashboard
 
 # Restart
-docker-compose restart bunq-dashboard
+docker service update --force bunq_bunq-dashboard
 ```
 
 #### B. Firewall Blocking
@@ -152,17 +157,18 @@ http://192.168.1.100:5000
 
 #### A. Wrong Credentials
 ```bash
-# Verify username/password in .env
-cat .env | grep BASIC_AUTH
+# Verify username in .env
+cat .env | grep BASIC_AUTH_USERNAME
 
-# Common mistake: Password contains special chars
-# Use quotes in .env if password has special characters:
-BASIC_AUTH_PASSWORD="P@ssw0rd!WithSpecial$Chars"
+# Verify secret exists
+docker secret ls | grep bunq_basic_auth_password
 
-# Reset password:
-nano .env
-# Change BASIC_AUTH_PASSWORD
-docker-compose restart bunq-dashboard
+# Reset password (rotate secret):
+sudo docker secret rm bunq_basic_auth_password
+printf "NewStrongPassword" | sudo docker secret create bunq_basic_auth_password -
+
+# Redeploy
+docker stack deploy -c docker-compose.yml bunq
 ```
 
 #### B. Session Expired
@@ -177,19 +183,16 @@ grep PERMANENT_SESSION_LIFETIME api_proxy.py
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=48)
 ```
 
-#### C. FLASK_SECRET_KEY Not Set or Changed
+#### C. Flask Secret Not Set or Changed
 ```bash
-# Check if set
-cat .env | grep FLASK_SECRET_KEY
+# Check if secret exists
+docker secret ls | grep bunq_flask_secret_key
 
-# If empty, generate:
-python3 -c "import secrets; print(secrets.token_hex(32))"
+# If missing, create:
+python3 -c "import secrets; print(secrets.token_hex(32))" | sudo docker secret create bunq_flask_secret_key -
 
-# Add to .env:
-FLASK_SECRET_KEY=<generated-key>
-
-# Restart
-docker-compose restart bunq-dashboard
+# Redeploy
+docker stack deploy -c docker-compose.yml bunq
 
 # ⚠️ WARNING: Changing secret key invalidates all sessions!
 ```
@@ -248,7 +251,7 @@ ALLOWED_ORIGINS=http://192.168.1.100:5000
 ALLOWED_ORIGINS=http://192.168.1.100:5000,http://10.8.0.5:5000
 
 # After changing:
-docker-compose restart bunq-dashboard
+docker service update --force bunq_bunq-dashboard
 ```
 
 #### B. Using Wrong Port
@@ -304,30 +307,34 @@ docker logs vaultwarden
 
 #### B. Wrong Credentials
 ```bash
-# Verify client_id and client_secret
-cat .env | grep VAULTWARDEN_CLIENT
+# Verify secrets exist
+docker secret ls | grep bunq_vaultwarden_client
 
 # Get correct credentials from Vaultwarden:
 1. Login to http://192.168.1.100:9000
 2. Account Settings → Security → API Key
 3. Enter master password
 4. Copy client_id and client_secret
-5. Update .env
-6. Restart: docker-compose restart bunq-dashboard
+5. Update secrets:
+   - `sudo docker secret rm bunq_vaultwarden_client_id`
+   - `printf "user.xxxx-xxxx-xxxx-xxxx" | sudo docker secret create bunq_vaultwarden_client_id -`
+   - `sudo docker secret rm bunq_vaultwarden_client_secret`
+   - `printf "your_client_secret" | sudo docker secret create bunq_vaultwarden_client_secret -`
+6. Redeploy: `docker stack deploy -c docker-compose.yml bunq`
 ```
 
 #### C. Network Issues Between Containers
 ```bash
 # Test connectivity
-docker exec bunq-dashboard ping vaultwarden
+docker exec "$BUNQ_CONTAINER" ping vaultwarden
 
 # If fails, check network:
 docker network ls
 docker network inspect bridge
 
 # Recreate network (optional):
-docker-compose down
-docker-compose up -d
+docker stack rm bunq
+docker stack deploy -c docker-compose.yml bunq
 ```
 
 #### D. Item Name Mismatch
@@ -360,7 +367,7 @@ VAULTWARDEN_ITEM_NAME=Bunq API Key
 7. Save
 
 # Restart dashboard:
-docker-compose restart bunq-dashboard
+docker service update --force bunq_bunq-dashboard
 ```
 
 ---
@@ -375,7 +382,7 @@ docker-compose restart bunq-dashboard
 ```bash
 # For session-based auth:
 1. Click login button (top right)
-2. Enter credentials from .env
+2. Enter credentials (username uit .env, wachtwoord via secret)
 3. Enable "Use real Bunq data" checkbox
 4. Click Refresh
 
@@ -388,7 +395,7 @@ docker-compose restart bunq-dashboard
 USE_VAULTWARDEN=true  # Must be true!
 
 # Check credentials set:
-cat .env | grep VAULTWARDEN_CLIENT
+docker secret ls | grep bunq_vaultwarden_client
 
 # If not set, follow Vaultwarden setup in SYNOLOGY_INSTALL.md
 ```
@@ -396,7 +403,7 @@ cat .env | grep VAULTWARDEN_CLIENT
 #### C. Bunq API Key Invalid
 ```bash
 # Check logs:
-docker logs bunq-dashboard | grep -i "api key"
+docker service logs bunq_bunq-dashboard | grep -i "api key"
 
 # Test API key manually:
 # In Bunq app:
@@ -418,7 +425,7 @@ BUNQ_ENVIRONMENT=SANDBOX     # For testing
 # Sandbox key doesn't work with PRODUCTION and vice versa
 
 # After changing:
-docker-compose restart bunq-dashboard
+docker service update --force bunq_bunq-dashboard
 ```
 
 ---
@@ -439,7 +446,7 @@ Rate limit exceeded. Please try again later.
 # Solution: Wait 60 seconds, then try again
 
 # To reset rate limiter:
-docker-compose restart bunq-dashboard
+docker service update --force bunq_bunq-dashboard
 
 # To increase limit (api_proxy.py):
 # Find: max_reqs = 5 if endpoint == 'login'
@@ -471,19 +478,16 @@ rate_limiter = RateLimiter(
 
 **Oplossingen:**
 
-#### A. FLASK_SECRET_KEY Changes
+#### A. Flask Secret Changes
 ```bash
 # If secret key changes, all sessions invalidate
-# Solution: Keep FLASK_SECRET_KEY constant!
+# Solution: Keep bunq_flask_secret_key constant!
 
 # Check if it's set:
-cat .env | grep FLASK_SECRET_KEY
+docker secret ls | grep bunq_flask_secret_key
 
-# If empty, generate:
-python3 -c "import secrets; print(secrets.token_hex(32))"
-
-# Add to .env permanently:
-FLASK_SECRET_KEY=<generated-key>
+# If missing, create:
+python3 -c "import secrets; print(secrets.token_hex(32))" | sudo docker secret create bunq_flask_secret_key -
 ```
 
 #### B. Browser Not Accepting Cookies
@@ -506,7 +510,7 @@ SESSION_COOKIE_SECURE=true   # For HTTPS
 # If accessing via https://, set to true
 
 # After changing:
-docker-compose restart bunq-dashboard
+docker service update --force bunq_bunq-dashboard
 ```
 
 ---
@@ -536,7 +540,7 @@ services:
           memory: 2048M    # Increase from 1024M
 
 # Restart:
-docker-compose up -d
+docker stack deploy -c docker-compose.yml bunq
 ```
 
 #### B. Bunq API Slow
@@ -574,7 +578,7 @@ params = {
 #### A. No Transaction Data
 ```bash
 # Check logs:
-docker logs bunq-dashboard | grep transaction
+docker service logs bunq_bunq-dashboard | grep transaction
 
 # Verify Bunq account has transactions
 # Or use demo data for testing
@@ -615,11 +619,11 @@ environment:
   SOME_VAR: "${SOME_VAR}"
 
 # Test variable loading:
-docker exec bunq-dashboard env | grep BUNQ
+docker exec "$BUNQ_CONTAINER" env | grep BUNQ
 
 # Rebuild if needed:
-docker-compose down
-docker-compose up -d --force-recreate
+docker stack rm bunq
+docker stack deploy -c docker-compose.yml bunq
 ```
 
 ---
@@ -655,10 +659,10 @@ FLASK_DEBUG=true
 LOG_LEVEL=DEBUG
 
 # Restart:
-docker-compose restart bunq-dashboard
+docker service update --force bunq_bunq-dashboard
 
 # Watch logs:
-docker-compose logs -f bunq-dashboard
+docker service logs -f bunq_bunq-dashboard
 
 # ⚠️ Disable in production! (exposes sensitive info)
 ```
@@ -708,10 +712,10 @@ echo "=== Docker Status ===" > diagnostic.txt
 docker ps >> diagnostic.txt
 echo "
 === Container Logs ===" >> diagnostic.txt
-docker logs bunq-dashboard >> diagnostic.txt 2>&1
+docker service logs bunq_bunq-dashboard >> diagnostic.txt 2>&1
 echo "
 === Environment (safe) ===" >> diagnostic.txt
-docker exec bunq-dashboard env | grep -v SECRET | grep -v PASSWORD >> diagnostic.txt
+docker exec "$BUNQ_CONTAINER" env | grep -v SECRET | grep -v PASSWORD >> diagnostic.txt
 echo "
 === Network ===" >> diagnostic.txt
 docker network inspect bridge >> diagnostic.txt
