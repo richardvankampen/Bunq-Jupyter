@@ -288,7 +288,7 @@ Maak `/volume1/docker/bunq-dashboard/.env`.
 
 **Optioneel (heeft defaults):**
 
-| Variabele | Betekenis | Aanbevolen waarde |
+| Variabele | Betekenis | Aanbevolen/default waarde |
 |---|---|---|
 | `LOG_LEVEL` | Log niveau | `INFO` |
 | `FLASK_DEBUG` | Debug mode | `false` |
