@@ -264,18 +264,62 @@ sudo mkdir -p /volume1/docker/bunq-dashboard/logs
 
 ### Stap 3.3: Configureer Environment
 
-Maak `/volume1/docker/bunq-dashboard/.env`:
+Maak `/volume1/docker/bunq-dashboard/.env`.
+
+**Verplicht (moet ingevuld zijn):**
+
+| Variabele | Betekenis | Aanbevolen waarde |
+|---|---|---|
+| `BASIC_AUTH_USERNAME` | Inlog gebruikersnaam voor het dashboard | `admin` (of eigen keuze) |
+| `BASIC_AUTH_PASSWORD` | Inlog wachtwoord (vereist; anders kan niemand inloggen) | Sterk wachtwoord (min 12+ tekens) |
+| `FLASK_SECRET_KEY` | Sessie‑encryptie sleutel (blijvend) | Genereer 64 hex chars: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `VAULTWARDEN_URL` | Interne URL van Vaultwarden container | `http://vaultwarden:80` |
+| `VAULTWARDEN_CLIENT_ID` | OAuth client_id uit Vaultwarden | Waarde uit stap 2.6 |
+| `VAULTWARDEN_CLIENT_SECRET` | OAuth client_secret uit Vaultwarden | Waarde uit stap 2.6 |
+| `VAULTWARDEN_ITEM_NAME` | Naam van het Vault item met je Bunq API key | `Bunq API Key` |
+| `USE_VAULTWARDEN` | Gebruik Vaultwarden i.p.v. directe API key | `true` |
+| `BUNQ_ENVIRONMENT` | Bunq omgeving | `PRODUCTION` (of `SANDBOX` voor test) |
+
+**Sterk aanbevolen (voorkomt CORS/HTTPS problemen):**
+
+| Variabele | Betekenis | Aanbevolen waarde |
+|---|---|---|
+| `ALLOWED_ORIGINS` | Toegestane frontend origins voor CORS | `http://<NAS-IP>:5000` (eventueel meerdere, komma‑gescheiden) |
+| `SESSION_COOKIE_SECURE` | Alleen veilige cookies via HTTPS | `false` voor HTTP, `true` als je HTTPS/reverse proxy gebruikt |
+
+**Optioneel (heeft defaults):**
+
+| Variabele | Betekenis | Aanbevolen waarde |
+|---|---|---|
+| `LOG_LEVEL` | Log niveau | `INFO` |
+| `FLASK_DEBUG` | Debug mode | `false` |
+| `CACHE_ENABLED` | Cache aan/uit | `true` |
+| `CACHE_TTL_SECONDS` | Cache TTL in seconden | `60` |
+| `DEFAULT_PAGE_SIZE` | Default pagination size | `500` |
+| `MAX_PAGE_SIZE` | Max pagination size | `2000` |
+| `MAX_DAYS` | Max dagen voor queries | `3650` |
+
+**Voorbeeld minimale `.env`:**
 
 ```bash
-# KRITIEKE CREDENTIALS
+# SECURITY (verplicht)
+BASIC_AUTH_USERNAME=admin
+BASIC_AUTH_PASSWORD=KiesEenSterkWachtwoord
+FLASK_SECRET_KEY=genereer_een_random_key_hier_64_characters_lang
+
+# CORS (aanbevolen)
+ALLOWED_ORIGINS=http://192.168.1.100:5000
+SESSION_COOKIE_SECURE=false
+
+# VAULTWARDEN (verplicht)
 VAULTWARDEN_URL=http://vaultwarden:80
 VAULTWARDEN_CLIENT_ID=user.xxxx-xxxx-xxxx-xxxx
 VAULTWARDEN_CLIENT_SECRET=your_client_secret_here
 VAULTWARDEN_ITEM_NAME=Bunq API Key
-
-# BUNQ CONFIG
-BUNQ_ENVIRONMENT=PRODUCTION
 USE_VAULTWARDEN=true
+
+# BUNQ (verplicht)
+BUNQ_ENVIRONMENT=PRODUCTION
 
 # OPTIONEEL
 LOG_LEVEL=INFO
