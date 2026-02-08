@@ -261,7 +261,11 @@ sudo mkdir -p /volume1/docker/bunq-dashboard/config
 sudo mkdir -p /volume1/docker/bunq-dashboard/logs
 ```
 
-### Stap 3.3: Configureer Environment (.env)
+### Stap 3.3: Configureer .env + Docker secrets (verplicht)
+
+**Belangrijk:** Gevoelige waarden **mogen niet in `.env`**. Die gaan via Docker Swarm secrets.
+
+#### A) `.env` (alleen niet‑gevoelig)
 
 Maak `/volume1/docker/bunq-dashboard/.env` met **niet‑gevoelige** settings.
 
@@ -303,9 +307,9 @@ LOG_LEVEL=INFO
 FLASK_DEBUG=false
 ```
 
-### Stap 3.4: Maak Docker secrets (verplicht)
+#### B) Docker secrets (verplicht)
 
-Gevoelige waarden **mogen niet in `.env`**. Maak ze als Docker Swarm secrets.
+Gevoelige waarden gaan in Docker Swarm secrets.
 
 **Eenmalig (Swarm activeren):**
 ```bash
@@ -339,7 +343,7 @@ printf "jouw_vaultwarden_client_secret" | sudo docker secret create bunq_vaultwa
 # printf "jouw_bunq_api_key" | sudo docker secret create bunq_api_key -
 ```
 
-### Stap 3.5: Update docker-compose.yml
+### Stap 3.4: Update docker-compose.yml
 
 Maak/Edit `/volume1/docker/bunq-dashboard/docker-compose.yml`:
 
@@ -419,12 +423,12 @@ secrets:
 
 **Let op:** Zorg dat de Vaultwarden container uit Deel 2 op hetzelfde `bridge` netwerk draait (standaard in Synology).
 
-### Stap 3.6: Vaultwarden Integratie (al ingebouwd)
+### Stap 3.5: Vaultwarden Integratie (al ingebouwd)
 
 De `api_proxy.py` bevat standaard Vaultwarden-integratie. Zorg alleen dat je
 `.env` correct is ingevuld (zoals in stap 3.3) en dat `USE_VAULTWARDEN=true` staat.
 
-### Stap 3.7: Build en Start
+### Stap 3.6: Build en Start
 
 ```bash
 cd /volume1/docker/bunq-dashboard
@@ -448,7 +452,7 @@ Je zou moeten zien:
 ✅ Dashboard running on http://0.0.0.0:5000
 ```
 
-### Stap 3.8: Open Dashboard
+### Stap 3.7: Open Dashboard
 
 Browser: `http://192.168.1.100:5000`
 
