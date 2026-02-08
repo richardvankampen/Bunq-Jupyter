@@ -89,8 +89,8 @@ services:
     
     ports:
       # Vaultwarden web interface
-      # Access: http://your-nas-ip:8080
-      - "8080:80"
+      # Access: http://your-nas-ip:9000
+      - "9000:80"
     
     volumes:
       # Persistent storage for Vaultwarden vault data (Synology bind mount)
@@ -98,7 +98,7 @@ services:
     
     environment:
       # Domain for Vaultwarden (update with your NAS IP or domain)
-      DOMAIN: "${VAULTWARDEN_DOMAIN:-http://localhost:8080}"
+      DOMAIN: "${VAULTWARDEN_DOMAIN:-http://localhost:9000}"
       
       # CRITICAL: Set to 'false' AFTER creating your first account!
       SIGNUPS_ALLOWED: "${VAULTWARDEN_SIGNUPS:-false}"

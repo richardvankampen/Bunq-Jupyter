@@ -308,7 +308,7 @@ docker logs vaultwarden
 cat .env | grep VAULTWARDEN_CLIENT
 
 # Get correct credentials from Vaultwarden:
-1. Login to http://192.168.1.100:8080
+1. Login to http://192.168.1.100:9000
 2. Account Settings → Security → API Key
 3. Enter master password
 4. Copy client_id and client_secret
@@ -339,7 +339,7 @@ docker-compose up -d
 VAULTWARDEN_ITEM_NAME=Bunq API Key
 
 # Check in Vaultwarden UI:
-1. Login to http://192.168.1.100:8080
+1. Login to http://192.168.1.100:9000
 2. My Vault → Check item name
 3. Must match EXACTLY (case-sensitive!)
 
@@ -351,7 +351,7 @@ VAULTWARDEN_ITEM_NAME=Bunq API Key
 #### E. API Key Not in Vault
 ```bash
 # Add Bunq API key to Vaultwarden:
-1. Login to http://192.168.1.100:8080
+1. Login to http://192.168.1.100:9000
 2. My Vault → Add Item
 3. Item Type: Login
 4. Name: Bunq API Key  # Exactly this!

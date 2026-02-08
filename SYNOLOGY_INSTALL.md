@@ -19,7 +19,7 @@ Complete stap-voor-stap instructies voor het installeren van Bunq Dashboard op j
 
 ### Netwerk
 - **Vaste lokale IP** voor je NAS (bijv. 192.168.1.100)
-- **Poorten vrij**: 5000 (Dashboard + API), 8080 (Vaultwarden)
+- **Poorten vrij**: 5000 (Dashboard + API), 9000 (Vaultwarden)
 
 ---
 
@@ -96,13 +96,13 @@ General Settings:
 └── Enable auto-restart ✓
 
 Port Settings:
-└── Local Port 8080 → Container Port 80
+└── Local Port 9000 → Container Port 80
 
 Volume Settings:
 └── /volume1/docker/vaultwarden → /data
 
 Environment:
-├── DOMAIN = http://192.168.1.100:8080 (vervang met je NAS IP!)
+├── DOMAIN = http://192.168.1.100:9000 (vervang met je NAS IP!)
 ├── SIGNUPS_ALLOWED = true
 └── LOG_LEVEL = info
 
@@ -126,13 +126,13 @@ services:
     restart: unless-stopped
     
     ports:
-      - "8080:80"
+      - "9000:80"
     
     volumes:
       - /volume1/docker/vaultwarden:/data
     
     environment:
-      DOMAIN: "http://192.168.1.100:8080"  # CHANGE THIS!
+      DOMAIN: "http://192.168.1.100:9000"  # CHANGE THIS!
       SIGNUPS_ALLOWED: "true"  # Change to false after first account!
       LOG_LEVEL: "info"
       WEBSOCKET_ENABLED: "true"
@@ -154,7 +154,7 @@ sudo docker ps | grep vaultwarden
 
 ### Stap 2.4: Setup Vaultwarden Account
 
-1. **Open browser**: `http://192.168.1.100:8080`
+1. **Open browser**: `http://192.168.1.100:9000`
 
 2. **Create Account**:
    - Email: `admin@local` (of jouw email)
@@ -186,7 +186,7 @@ sudo docker ps | grep vaultwarden
 
 2. **Bewaar in Vaultwarden**:
    ```
-   Vaultwarden web interface (http://192.168.1.100:8080)
+   Vaultwarden web interface (http://192.168.1.100:9000)
    ├── Login met je account
    ├── My Vault → + Add Item
    ├── Item Type: Login
@@ -421,7 +421,7 @@ Browser: `http://192.168.1.100:5000`
 Control Panel → Security → Firewall → Edit Rules
 
 Create Rule:
-├── Ports: Custom → 5000,8080
+├── Ports: Custom → 5000,9000
 ├── Source IP: 192.168.0.0/16 (lokaal netwerk)
 └── Action: Allow
 
@@ -581,7 +581,7 @@ sudo chmod -R 755 /volume1/docker/bunq-dashboard
 
 ## ✅ Verification Checklist
 
-- [ ] Vaultwarden running on port 8080
+- [ ] Vaultwarden running on port 9000
 - [ ] Vaultwarden accessible via browser
 - [ ] Bunq API Key stored in vault
 - [ ] Vaultwarden signups disabled

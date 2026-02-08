@@ -226,7 +226,7 @@ Control Panel → Security → Firewall → Edit Rules
 # Create rule:
 Ports:
 ├── 5000 (Dashboard)
-├── 8080 (Vaultwarden)
+├── 9000 (Vaultwarden)
 └── 1194 (VPN)
 
 Source IP: 192.168.0.0/16  # Local network only
@@ -242,14 +242,14 @@ Action: Deny
 ```bash
 # Allow local network only
 sudo iptables -A INPUT -p tcp --dport 5000 -s 192.168.0.0/16 -j ACCEPT
-sudo iptables -A INPUT -p tcp --dport 8080 -s 192.168.0.0/16 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 9000 -s 192.168.0.0/16 -j ACCEPT
 
 # Allow VPN
 sudo iptables -A INPUT -p udp --dport 1194 -j ACCEPT
 
 # Drop all other connections
 sudo iptables -A INPUT -p tcp --dport 5000 -j DROP
-sudo iptables -A INPUT -p tcp --dport 8080 -j DROP
+sudo iptables -A INPUT -p tcp --dport 9000 -j DROP
 
 # Save rules
 sudo iptables-save > /etc/iptables/rules.v4
