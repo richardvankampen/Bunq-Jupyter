@@ -10,6 +10,7 @@ from flask import Flask, jsonify, request, Response, session, make_response, sen
 from flask_cors import CORS
 from flask_caching import Cache
 from functools import wraps
+from bunq import ApiEnvironmentType
 from bunq.sdk.context.api_context import ApiContext
 from bunq.sdk.context.bunq_context import BunqContext
 from bunq.sdk.model.generated import endpoint
@@ -463,7 +464,12 @@ def get_api_key_from_vaultwarden():
 
 API_KEY = get_api_key_from_vaultwarden()
 CONFIG_FILE = 'config/bunq_production.conf'
-ENVIRONMENT = os.getenv('BUNQ_ENVIRONMENT', 'PRODUCTION')
+ENVIRONMENT_LABEL = os.getenv('BUNQ_ENVIRONMENT', 'PRODUCTION').strip().upper()
+if ENVIRONMENT_LABEL not in ('PRODUCTION', 'SANDBOX'):
+    logger.warning(f"⚠️ Unknown BUNQ_ENVIRONMENT '{ENVIRONMENT_LABEL}', defaulting to PRODUCTION")
+    ENVIRONMENT_LABEL = 'PRODUCTION'
+
+ENVIRONMENT_TYPE = ApiEnvironmentType.SANDBOX if ENVIRONMENT_LABEL == 'SANDBOX' else ApiEnvironmentType.PRODUCTION
 
 # Validate configuration
 if not API_KEY:
@@ -491,7 +497,7 @@ def init_bunq():
         if not os.path.exists(CONFIG_FILE):
             logger.info("🔄 Creating new Bunq API context...")
             api_context = ApiContext.create(
-                environment_type=ENVIRONMENT,
+                environment_type=ENVIRONMENT_TYPE,
                 api_key=API_KEY,
                 device_description="Bunq Dashboard (READ-ONLY)"
             )
@@ -504,7 +510,7 @@ def init_bunq():
         
         BunqContext.load_api_context(api_context)
         logger.info("✅ Bunq API initialized successfully")
-        logger.info(f"   Environment: {ENVIRONMENT}")
+        logger.info(f"   Environment: {ENVIRONMENT_LABEL}")
         logger.info(f"   Access Level: READ-ONLY")
         return True
         
@@ -875,7 +881,7 @@ def get_demo_data():
 
 if __name__ == '__main__':
     print("🚀 Starting Bunq Dashboard API (SESSION-BASED AUTH)...")
-    print(f"📡 Environment: {ENVIRONMENT}")
+    print(f"📡 Environment: {ENVIRONMENT_LABEL}")
     print(f"🔒 CORS Origins: {ALLOWED_ORIGINS}")
     print(f"🔐 Authentication: {'ENABLED ✅' if has_config('BASIC_AUTH_PASSWORD', 'basic_auth_password') else 'DISABLED ⚠️'}")
     print(f"🍪 Session-based auth with secure cookies")
