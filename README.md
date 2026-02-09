@@ -15,12 +15,26 @@ Read-only dashboard dat data uit de Bunq API haalt en overzichtelijk visualiseer
 - Caching en pagination voor performance
 - Synology‑ready deployment
 
+**Visualisaties:**
+- KPI Cards (inkomsten/uitgaven/sparen)
+- Cashflow timeline
+- Sankey diagram (geldstromen)
+- Sunburst (categorieën)
+- 3D time-space chart
+- Heatmap (dag/uur)
+- Top merchants
+- Ridge plot (distributie)
+- Racing bar chart
+- Insights (automatisch)
+- Custom charts
+
 ## 🔒 Security (Kort)
 
 - Session-based auth met HttpOnly cookies en CSRF‑bescherming
 - Secrets via Vaultwarden + Docker Swarm secrets
 - VPN‑only toegang, geen publieke exposure
 - Rate limiting op login en API
+Meer details: [SECURITY.md](SECURITY.md)
 
 ## 🚀 Quick Start (Synology)
 
