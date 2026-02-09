@@ -6,8 +6,8 @@ Complete stap-voor-stap instructies voor het installeren van Bunq Dashboard op j
 
 ## 🧭 Navigatie
 
-- Startpunt en overzicht: [README.md](README.md)
-- Installatie (dit document): [SYNOLOGY_INSTALL.md](SYNOLOGY_INSTALL.md)
+- Startpunt (dit document): [SYNOLOGY_INSTALL.md](SYNOLOGY_INSTALL.md)
+- Korte overzichtspagina: [README.md](README.md)
 - Security hardening: [SECURITY.md](SECURITY.md)
 - Troubleshooting: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 
