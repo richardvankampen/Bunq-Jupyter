@@ -123,7 +123,7 @@ Network:
 └── bridge (default — we’ll attach to `bunq-net` in stap 3.3)
 ```
 
-**Of via docker-compose** (`/volume1/docker/vaultwarden/docker-compose.yml`):
+**Of via docker compose** (`/volume1/docker/vaultwarden/docker-compose.yml`):
 
 ```yaml
 version: '3.8'
@@ -155,8 +155,10 @@ services:
 Klik "Run" of via SSH:
 ```bash
 cd /volume1/docker/vaultwarden
-sudo docker-compose up -d
+sudo docker compose up -d
 ```
+
+**Tip:** Als `docker compose` niet werkt op jouw DSM, gebruik dan `docker-compose` (met een streepje).
 
 Verify:
 ```bash
