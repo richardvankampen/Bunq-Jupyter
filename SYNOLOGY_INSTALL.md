@@ -390,6 +390,19 @@ printf '%s' "jouw_vaultwarden_client_secret" | sudo docker secret create bunq_va
 # printf '%s' "jouw_bunq_api_key" | sudo docker secret create bunq_api_key -
 ```
 
+**Veilige methode (voorkomt shell‑expansie bij speciale tekens):**
+```bash
+# Plak client_id (zichtbaar)
+read -r CLIENT_ID
+# Plak client_secret (onzichtbaar)
+read -s CLIENT_SECRET
+
+printf '%s' "$CLIENT_ID" | sudo docker secret create bunq_vaultwarden_client_id -
+printf '%s' "$CLIENT_SECRET" | sudo docker secret create bunq_vaultwarden_client_secret -
+
+unset CLIENT_ID CLIENT_SECRET
+```
+
 ### Stap 3.4: Update docker-compose.yml
 
 Maak/Edit `/volume1/docker/bunq-dashboard/docker-compose.yml`:
