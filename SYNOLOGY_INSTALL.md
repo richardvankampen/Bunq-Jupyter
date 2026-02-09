@@ -488,6 +488,10 @@ cd /volume1/docker/bunq-dashboard
 # Build image
 sudo docker build -t bunq-dashboard:local .
 
+**Let op (pip warning):** Tijdens het builden kun je een waarschuwing zien zoals  
+`WARNING: Running pip as the 'root' user ...` of een melding over een nieuwe pip‑versie.  
+Dit is **normaal in Docker builds** en je hoeft hier niets mee te doen.
+
 # Load .env into shell (for variable substitution)
 set -a; source .env; set +a
 
