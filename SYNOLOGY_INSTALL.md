@@ -630,6 +630,7 @@ No code changes needed! ✨
 - Logs: `sudo docker service logs -f bunq_bunq-dashboard` en `sudo docker logs vaultwarden`
 - Connectivity: `sudo docker exec $(sudo docker ps --filter name=bunq_bunq-dashboard -q | head -n1) ping vaultwarden`
 - Redeploy na .env wijziging: `set -a; source .env; set +a; sudo -E docker stack deploy -c docker-compose.yml bunq`
+- Alleen herstart (zonder config/secrets wijzigingen): `sudo docker service update --force bunq_bunq-dashboard`
 
 Voor uitgebreide oplossingen, zie [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
