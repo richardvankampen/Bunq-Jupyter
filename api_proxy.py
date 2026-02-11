@@ -547,10 +547,11 @@ def init_bunq():
     try:
         if not os.path.exists(CONFIG_FILE):
             logger.info("🔄 Creating new Bunq API context...")
+            # Use positional args for compatibility across bunq-sdk versions
             api_context = ApiContext.create(
-                environment_type=ENVIRONMENT_TYPE,
-                api_key=API_KEY,
-                device_description="Bunq Dashboard (READ-ONLY)"
+                ENVIRONMENT_TYPE,
+                API_KEY,
+                "Bunq Dashboard (READ-ONLY)"
             )
             api_context.save(CONFIG_FILE)
             logger.info("✅ Bunq API context created and saved")
