@@ -22,6 +22,7 @@ import logging
 import hashlib
 import time
 import secrets
+import uuid
 from collections import defaultdict
 
 # ============================================
@@ -81,6 +82,31 @@ def has_config(key, secret_name=None):
     if secret_name and read_secret(secret_name):
         return True
     return bool(os.getenv(key))
+
+def get_vaultwarden_device_identifier():
+    env_value = os.getenv('VAULTWARDEN_DEVICE_IDENTIFIER')
+    if env_value:
+        return env_value.strip()
+
+    device_id_path = os.path.join('config', 'vaultwarden_device_id')
+    try:
+        with open(device_id_path, "r", encoding="utf-8") as file:
+            stored = file.read().strip()
+            if stored:
+                return stored
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed to read Vaultwarden device identifier: {exc}")
+
+    new_id = str(uuid.uuid4())
+    try:
+        os.makedirs(os.path.dirname(device_id_path), exist_ok=True)
+        with open(device_id_path, "w", encoding="utf-8") as file:
+            file.write(new_id)
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed to persist Vaultwarden device identifier: {exc}")
+    return new_id
 
 # ============================================
 # FLASK APP INITIALIZATION
@@ -434,11 +460,18 @@ def get_api_key_from_vaultwarden():
         # Step 1: Authenticate
         logger.info("🔑 Authenticating with Vaultwarden...")
         token_url = f"{vault_url}/identity/connect/token"
+        device_identifier = get_vaultwarden_device_identifier()
+        device_name = os.getenv('VAULTWARDEN_DEVICE_NAME', 'Bunq Dashboard').strip()
+        device_type = os.getenv('VAULTWARDEN_DEVICE_TYPE', '22').strip()
         token_data = {
             'grant_type': 'client_credentials',
             'scope': 'api',
             'client_id': client_id,
-            'client_secret': client_secret
+            'client_secret': client_secret,
+            # Some Vaultwarden/Bitwarden servers require these fields
+            'deviceType': device_type,
+            'deviceIdentifier': device_identifier,
+            'deviceName': device_name
         }
         
         token_response = requests.post(token_url, data=token_data, timeout=10)

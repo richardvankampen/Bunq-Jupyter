@@ -312,6 +312,9 @@ Gebruik daarom **altijd dezelfde URL** (HTTP of HTTPS), anders werkt je sessie n
 | `DEFAULT_PAGE_SIZE` | Default pagination size | `500` |
 | `MAX_PAGE_SIZE` | Max pagination size | `2000` |
 | `MAX_DAYS` | Max dagen voor queries | `3650` |
+| `VAULTWARDEN_DEVICE_IDENTIFIER` | Device ID voor Vaultwarden OAuth | Automatisch gegenereerd |
+| `VAULTWARDEN_DEVICE_NAME` | Device naam voor Vaultwarden OAuth | `Bunq Dashboard` |
+| `VAULTWARDEN_DEVICE_TYPE` | Device type voor Vaultwarden OAuth | `22` |
 
 **Voorbeeld minimale `.env`:**
 
