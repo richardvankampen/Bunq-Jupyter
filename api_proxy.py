@@ -58,52 +58,55 @@ def get_int_env(name, default):
 
 _MONETARY_ACCOUNT_ENDPOINT = None
 
-def resolve_monetary_account_endpoint():
-    """Resolve the monetary account endpoint class across bunq-sdk variants."""
-    global _MONETARY_ACCOUNT_ENDPOINT
+def _has_zero_required_positional_args(callable_obj):
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return False
 
-    if _MONETARY_ACCOUNT_ENDPOINT is not None:
-        return _MONETARY_ACCOUNT_ENDPOINT
-
-    def _has_zero_required_positional_args(callable_obj):
-        try:
-            signature = inspect.signature(callable_obj)
-        except (TypeError, ValueError):
+    for parameter in signature.parameters.values():
+        if parameter.kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            continue
+        if parameter.default is inspect.Parameter.empty:
             return False
+    return True
 
-        for parameter in signature.parameters.values():
-            if parameter.kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
-                continue
-            if parameter.default is inspect.Parameter.empty:
-                return False
-        return True
+def _is_monetary_list_endpoint(name, candidate):
+    if candidate is None:
+        return False
+    if not callable(getattr(candidate, 'list', None)):
+        return False
+    normalized = name.lower().replace('_', '')
+    if not normalized.startswith('monetaryaccount'):
+        return False
+    return _has_zero_required_positional_args(candidate.list)
 
-    def _is_monetary_list_endpoint(name, candidate):
-        if candidate is None:
-            return False
-        if not callable(getattr(candidate, 'list', None)):
-            return False
-        normalized = name.lower().replace('_', '')
-        if not normalized.startswith('monetaryaccount'):
-            return False
-        return _has_zero_required_positional_args(candidate.list)
-
+def discover_monetary_account_endpoints():
+    """Discover monetary-account endpoints ordered by preference."""
     direct_candidates = ('MonetaryAccountBank', 'MonetaryAccount')
+    discovered = []
+    seen = set()
+
+    def add_candidate(display_name, candidate_name, candidate_obj):
+        if not _is_monetary_list_endpoint(candidate_name, candidate_obj):
+            return
+        candidate_id = id(candidate_obj)
+        if candidate_id in seen:
+            return
+        seen.add(candidate_id)
+        discovered.append((display_name, candidate_obj))
+
+    # Prefer official direct names first.
     for name in direct_candidates:
-        candidate = getattr(endpoint, name, None)
-        if _is_monetary_list_endpoint(name, candidate):
-            _MONETARY_ACCOUNT_ENDPOINT = candidate
-            logger.info(f"Using bunq endpoint class: {name}")
-            return _MONETARY_ACCOUNT_ENDPOINT
+        add_candidate(name, name, getattr(endpoint, name, None))
 
-    # Some sdk variants export differently named endpoint classes directly on `endpoint`.
+    # Then scan root endpoint exports.
     for attr_name in dir(endpoint):
-        candidate = getattr(endpoint, attr_name, None)
-        if _is_monetary_list_endpoint(attr_name, candidate):
-            _MONETARY_ACCOUNT_ENDPOINT = candidate
-            logger.info(f"Using bunq endpoint class: {attr_name}")
-            return _MONETARY_ACCOUNT_ENDPOINT
+        if attr_name in direct_candidates:
+            continue
+        add_candidate(attr_name, attr_name, getattr(endpoint, attr_name, None))
 
+    # Finally scan endpoint submodules for sdk variants that don't re-export at root.
     endpoint_path = getattr(endpoint, '__path__', None)
     if endpoint_path:
         base_module = endpoint.__name__
@@ -116,19 +119,54 @@ def resolve_monetary_account_endpoint():
                 module = importlib.import_module(f"{base_module}.{module_name}")
             except Exception:
                 continue
-            for class_name in dir(module):
-                candidate = getattr(module, class_name, None)
-                if _is_monetary_list_endpoint(class_name, candidate):
-                    _MONETARY_ACCOUNT_ENDPOINT = candidate
-                    logger.info(f"Using bunq endpoint class: {module_name}.{class_name}")
-                    return _MONETARY_ACCOUNT_ENDPOINT
 
-    raise RuntimeError('bunq-sdk missing monetary account endpoint')
+            # Prefer direct names in each module first.
+            for class_name in direct_candidates:
+                add_candidate(
+                    f"{module_name}.{class_name}",
+                    class_name,
+                    getattr(module, class_name, None),
+                )
+            for class_name in dir(module):
+                if class_name in direct_candidates:
+                    continue
+                add_candidate(
+                    f"{module_name}.{class_name}",
+                    class_name,
+                    getattr(module, class_name, None),
+                )
+
+    return discovered
 
 def list_monetary_accounts():
     """Return monetary accounts with bunq-sdk compatibility across versions."""
-    account_endpoint = resolve_monetary_account_endpoint()
-    return account_endpoint.list().value
+    global _MONETARY_ACCOUNT_ENDPOINT
+
+    candidates = []
+    if _MONETARY_ACCOUNT_ENDPOINT is not None:
+        candidates.append(("cached", _MONETARY_ACCOUNT_ENDPOINT))
+
+    for name, candidate in discover_monetary_account_endpoints():
+        if _MONETARY_ACCOUNT_ENDPOINT is not None and candidate is _MONETARY_ACCOUNT_ENDPOINT:
+            continue
+        candidates.append((name, candidate))
+
+    if not candidates:
+        raise RuntimeError('bunq-sdk missing monetary account endpoint')
+
+    last_exc = None
+    for name, account_endpoint in candidates:
+        try:
+            accounts = account_endpoint.list().value
+            if _MONETARY_ACCOUNT_ENDPOINT is not account_endpoint:
+                logger.info(f"Using bunq endpoint class: {name}")
+            _MONETARY_ACCOUNT_ENDPOINT = account_endpoint
+            return accounts
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(f"⚠️ Bunq endpoint {name} failed: {exc}")
+
+    raise RuntimeError(f"bunq-sdk monetary account list failed: {last_exc}")
 
 # ============================================
 # SECRET HELPERS (Docker Swarm secrets)
@@ -761,7 +799,7 @@ def get_accounts():
         return jsonify(response)
         
     except Exception as e:
-        logger.error(f"❌ Error fetching accounts: {e}")
+        logger.exception(f"❌ Error fetching accounts: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
@@ -844,7 +882,7 @@ def get_transactions():
         return jsonify(response)
             
     except Exception as e:
-        logger.error(f"❌ Error fetching transactions: {e}")
+        logger.exception(f"❌ Error fetching transactions: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
@@ -999,6 +1037,7 @@ def get_statistics():
         return jsonify(response)
         
     except Exception as e:
+        logger.exception(f"❌ Error fetching statistics: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
