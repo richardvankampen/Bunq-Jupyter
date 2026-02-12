@@ -605,6 +605,60 @@ def parse_monetary_value(monetary_value, default_currency='EUR', context='amount
     currency = getattr(monetary_value, 'currency', None) or default_currency
     return value, currency
 
+def normalize_iban(value):
+    if not value:
+        return None
+    normalized = str(value).strip().replace(' ', '').upper()
+    if len(normalized) < 15:
+        return None
+    if not (normalized[:2].isalpha() and normalized[2:4].isdigit()):
+        return None
+    return normalized
+
+def extract_alias_iban(alias):
+    """Extract IBAN from bunq alias-like objects across SDK variants."""
+    if alias is None:
+        return None
+
+    alias_type = (getattr(alias, 'type', None) or '').upper()
+    alias_value = getattr(alias, 'value', None)
+    if alias_type == 'IBAN':
+        normalized = normalize_iban(alias_value)
+        if normalized:
+            return normalized
+
+    # Some SDK variants expose raw IBAN or embed pointer-like objects.
+    for candidate in (
+        getattr(alias, 'iban', None),
+        getattr(alias, 'value', None),
+        getattr(getattr(alias, 'pointer', None), 'value', None),
+    ):
+        normalized = normalize_iban(candidate)
+        if normalized:
+            return normalized
+
+    return None
+
+def extract_counterparty_name(counterparty_alias):
+    """Extract a readable counterparty name for different alias object types."""
+    if counterparty_alias is None:
+        return 'Unknown'
+
+    for attr_name in ('display_name', 'name', 'description', 'label'):
+        value = getattr(counterparty_alias, attr_name, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    iban = extract_alias_iban(counterparty_alias)
+    if iban:
+        return iban
+
+    alias_value = getattr(counterparty_alias, 'value', None)
+    if isinstance(alias_value, str) and alias_value.strip():
+        return alias_value.strip()
+
+    return 'Unknown'
+
 def parse_bunq_datetime(value, context='datetime'):
     """
     Parse bunq datetime strings and always return timezone-aware UTC datetimes.
@@ -637,10 +691,9 @@ def extract_own_ibans(accounts):
     for account in accounts:
         aliases = getattr(account, 'alias', None) or []
         for alias in aliases:
-            alias_type = getattr(alias, 'type', None)
-            alias_value = getattr(alias, 'value', None)
-            if alias_type == 'IBAN' and alias_value:
-                ibans.add(alias_value)
+            alias_iban = extract_alias_iban(alias)
+            if alias_iban:
+                ibans.add(alias_iban)
     return ibans
 
 # ============================================
@@ -1086,18 +1139,17 @@ def get_account_transactions(account_id, cutoff_date=None, sort_desc=True, own_i
         
         is_internal_transfer = False
         counterparty_alias = getattr(payment, 'counterparty_alias', None)
-        if counterparty_alias:
-            alias_type = getattr(counterparty_alias, 'type', None)
-            alias_value = getattr(counterparty_alias, 'value', None)
-            if alias_type == 'IBAN' and alias_value in own_ibans:
-                is_internal_transfer = True
+        counterparty_name = extract_counterparty_name(counterparty_alias)
+        counterparty_iban = extract_alias_iban(counterparty_alias)
+        if counterparty_iban and counterparty_iban in own_ibans:
+            is_internal_transfer = True
         
         description = getattr(payment, 'description', None) or ''
         amount_value, amount_currency = parse_monetary_value(
             getattr(payment, 'amount', None),
             context=f"payment {getattr(payment, 'id_', 'unknown')} amount"
         )
-        category = categorize_transaction(description, counterparty_alias, is_internal_transfer)
+        category = categorize_transaction(description, counterparty_name, is_internal_transfer)
         
         transactions.append({
             'id': getattr(payment, 'id_', None),
@@ -1105,7 +1157,7 @@ def get_account_transactions(account_id, cutoff_date=None, sort_desc=True, own_i
             'amount': amount_value,
             'currency': amount_currency,
             'description': description,
-            'counterparty': counterparty_alias.display_name if counterparty_alias else 'Unknown',
+            'counterparty': counterparty_name,
             'merchant': payment.merchant_reference if hasattr(payment, 'merchant_reference') else None,
             'category': category,
             'type': getattr(payment, 'type_', None),
@@ -1116,12 +1168,12 @@ def get_account_transactions(account_id, cutoff_date=None, sort_desc=True, own_i
     
     return transactions
 
-def categorize_transaction(description, counterparty, is_internal=False):
+def categorize_transaction(description, counterparty_name, is_internal=False):
     """Simple rule-based categorization"""
     if is_internal:
         return 'Internal Transfer'
     desc_lower = description.lower() if description else ''
-    counter_lower = counterparty.display_name.lower() if counterparty and counterparty.display_name else ''
+    counter_lower = counterparty_name.lower() if counterparty_name else ''
     combined = desc_lower + ' ' + counter_lower
     
     if any(word in combined for word in ['albert heijn', 'ah ', 'jumbo', 'lidl', 'aldi', 'plus', 'supermarkt']):
