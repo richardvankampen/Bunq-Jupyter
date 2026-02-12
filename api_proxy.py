@@ -60,6 +60,21 @@ _MONETARY_ACCOUNT_ENDPOINT = None
 _PAYMENT_ENDPOINT = None
 _PAYMENT_LIST_MODE = None
 
+def get_obj_field(obj, *field_names, default=None):
+    """Read first non-empty field from objects or dictionaries."""
+    if obj is None:
+        return default
+
+    for field_name in field_names:
+        value = None
+        if isinstance(obj, dict):
+            value = obj.get(field_name)
+        else:
+            value = getattr(obj, field_name, None)
+        if value is not None:
+            return value
+    return default
+
 def _has_zero_required_positional_args(callable_obj):
     try:
         signature = inspect.signature(callable_obj)
@@ -601,8 +616,12 @@ def parse_monetary_value(monetary_value, default_currency='EUR', context='amount
     if monetary_value is None:
         logger.warning(f"⚠️ Missing monetary object for {context}; using 0 {default_currency}")
         return 0.0, default_currency
-    value = safe_float(getattr(monetary_value, 'value', None), default=0.0, context=context)
-    currency = getattr(monetary_value, 'currency', None) or default_currency
+    value = safe_float(
+        get_obj_field(monetary_value, 'value', 'amount', default=None),
+        default=0.0,
+        context=context
+    )
+    currency = get_obj_field(monetary_value, 'currency', 'currency_code', default=None) or default_currency
     return value, currency
 
 def normalize_iban(value):
@@ -620,8 +639,8 @@ def extract_alias_iban(alias):
     if alias is None:
         return None
 
-    alias_type = (getattr(alias, 'type', None) or '').upper()
-    alias_value = getattr(alias, 'value', None)
+    alias_type = (get_obj_field(alias, 'type', 'type_', default='') or '').upper()
+    alias_value = get_obj_field(alias, 'value', 'iban')
     if alias_type == 'IBAN':
         normalized = normalize_iban(alias_value)
         if normalized:
@@ -629,9 +648,9 @@ def extract_alias_iban(alias):
 
     # Some SDK variants expose raw IBAN or embed pointer-like objects.
     for candidate in (
-        getattr(alias, 'iban', None),
-        getattr(alias, 'value', None),
-        getattr(getattr(alias, 'pointer', None), 'value', None),
+        get_obj_field(alias, 'iban', 'value'),
+        get_obj_field(get_obj_field(alias, 'pointer'), 'value', 'iban'),
+        get_obj_field(get_obj_field(alias, 'alias'), 'value', 'iban'),
     ):
         normalized = normalize_iban(candidate)
         if normalized:
@@ -645,7 +664,7 @@ def extract_counterparty_name(counterparty_alias):
         return 'Unknown'
 
     for attr_name in ('display_name', 'name', 'description', 'label'):
-        value = getattr(counterparty_alias, attr_name, None)
+        value = get_obj_field(counterparty_alias, attr_name)
         if isinstance(value, str) and value.strip():
             return value.strip()
 
@@ -653,7 +672,7 @@ def extract_counterparty_name(counterparty_alias):
     if iban:
         return iban
 
-    alias_value = getattr(counterparty_alias, 'value', None)
+    alias_value = get_obj_field(counterparty_alias, 'value', 'iban')
     if isinstance(alias_value, str) and alias_value.strip():
         return alias_value.strip()
 
@@ -996,19 +1015,19 @@ def get_accounts():
         
         accounts_data = []
         for account in accounts:
-            account_id = getattr(account, 'id_', None)
+            account_id = get_obj_field(account, 'id_', 'id')
             balance_value, balance_currency = parse_monetary_value(
-                getattr(account, 'balance', None),
+                get_obj_field(account, 'balance'),
                 context=f"account {account_id} balance"
             )
             accounts_data.append({
                 'id': account_id,
-                'description': getattr(account, 'description', None) or f"Account {account_id}",
+                'description': get_obj_field(account, 'description', 'display_name') or f"Account {account_id}",
                 'balance': {
                     'value': balance_value,
                     'currency': balance_currency
                 },
-                'status': getattr(account, 'status', None) or 'UNKNOWN'
+                'status': get_obj_field(account, 'status', 'status_') or 'UNKNOWN'
             })
         
         logger.info(f"✅ Retrieved {len(accounts_data)} accounts")
@@ -1059,7 +1078,11 @@ def get_transactions():
         logger.info(f"📊 Fetching transactions (last {days} days) for {session.get('username')}")
         
         accounts = list_monetary_accounts()
-        accounts_by_id = {str(acc.id_): acc for acc in accounts}
+        accounts_by_id = {}
+        for acc in accounts:
+            acc_id = get_obj_field(acc, 'id_', 'id')
+            if acc_id is not None:
+                accounts_by_id[str(acc_id)] = acc
         own_ibans = extract_own_ibans(accounts)
         
         target_ids = None
@@ -1075,12 +1098,13 @@ def get_transactions():
         
         all_transactions = []
         for account in selected_accounts:
+            account_id_value = get_obj_field(account, 'id_', 'id')
             transactions = get_account_transactions(
-                account.id_,
+                account_id_value,
                 cutoff_date,
                 sort_desc,
                 own_ibans,
-                account.description
+                get_obj_field(account, 'description', 'display_name')
             )
             all_transactions.extend(transactions)
         
@@ -1120,16 +1144,17 @@ def get_account_transactions(account_id, cutoff_date=None, sort_desc=True, own_i
     own_ibans = own_ibans or set()
     
     for payment in payments:
-        created_raw = getattr(payment, 'created', None)
+        payment_id = get_obj_field(payment, 'id_', 'id', default='unknown')
+        created_raw = get_obj_field(payment, 'created', 'created_at', 'date')
         if not created_raw:
-            logger.warning(f"⚠️ Payment {getattr(payment, 'id_', 'unknown')} missing created timestamp; skipping")
+            logger.warning(f"⚠️ Payment {payment_id} missing created timestamp; skipping")
             continue
         created = parse_bunq_datetime(
             created_raw,
-            context=f"payment {getattr(payment, 'id_', 'unknown')} created"
+            context=f"payment {payment_id} created"
         )
         if created is None:
-            logger.warning(f"⚠️ Payment {getattr(payment, 'id_', 'unknown')} has invalid created timestamp; skipping")
+            logger.warning(f"⚠️ Payment {payment_id} has invalid created timestamp; skipping")
             continue
 
         if cutoff_date and created < cutoff_date:
@@ -1138,29 +1163,29 @@ def get_account_transactions(account_id, cutoff_date=None, sort_desc=True, own_i
             continue
         
         is_internal_transfer = False
-        counterparty_alias = getattr(payment, 'counterparty_alias', None)
+        counterparty_alias = get_obj_field(payment, 'counterparty_alias', 'counterparty')
         counterparty_name = extract_counterparty_name(counterparty_alias)
         counterparty_iban = extract_alias_iban(counterparty_alias)
         if counterparty_iban and counterparty_iban in own_ibans:
             is_internal_transfer = True
         
-        description = getattr(payment, 'description', None) or ''
+        description = get_obj_field(payment, 'description', 'label', default='') or ''
         amount_value, amount_currency = parse_monetary_value(
-            getattr(payment, 'amount', None),
-            context=f"payment {getattr(payment, 'id_', 'unknown')} amount"
+            get_obj_field(payment, 'amount', 'monetary_value'),
+            context=f"payment {payment_id} amount"
         )
         category = categorize_transaction(description, counterparty_name, is_internal_transfer)
         
         transactions.append({
-            'id': getattr(payment, 'id_', None),
+            'id': payment_id,
             'date': created.isoformat(),
             'amount': amount_value,
             'currency': amount_currency,
             'description': description,
             'counterparty': counterparty_name,
-            'merchant': payment.merchant_reference if hasattr(payment, 'merchant_reference') else None,
+            'merchant': get_obj_field(payment, 'merchant_reference', 'merchant_reference_'),
             'category': category,
-            'type': getattr(payment, 'type_', None),
+            'type': get_obj_field(payment, 'type_', 'type'),
             'account_id': account_id,
             'account_name': account_name,
             'is_internal_transfer': is_internal_transfer
@@ -1224,12 +1249,13 @@ def get_statistics():
         all_transactions = []
         
         for account in accounts:
+            account_id_value = get_obj_field(account, 'id_', 'id')
             transactions = get_account_transactions(
-                account.id_,
+                account_id_value,
                 cutoff_date,
                 True,
                 own_ibans,
-                account.description
+                get_obj_field(account, 'description', 'display_name')
             )
             all_transactions.extend(transactions)
         
