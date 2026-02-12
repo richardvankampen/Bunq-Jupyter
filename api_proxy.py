@@ -390,6 +390,37 @@ def parse_bool(value, default=False):
         return default
     return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
 
+def safe_float(value, default=0.0, context="value"):
+    """Convert numeric-like values to float; fallback to default on None/invalid."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return default
+        try:
+            return float(normalized)
+        except ValueError:
+            # Fallback for values like "12,34"
+            if ',' in normalized and '.' not in normalized:
+                try:
+                    return float(normalized.replace(',', '.'))
+                except ValueError:
+                    pass
+    logger.warning(f"⚠️ Invalid numeric {context}: {value!r}; using default {default}")
+    return default
+
+def parse_monetary_value(monetary_value, default_currency='EUR', context='amount'):
+    """Return tuple(float value, currency) from bunq MonetaryValue-like objects."""
+    if monetary_value is None:
+        logger.warning(f"⚠️ Missing monetary object for {context}; using 0 {default_currency}")
+        return 0.0, default_currency
+    value = safe_float(getattr(monetary_value, 'value', None), default=0.0, context=context)
+    currency = getattr(monetary_value, 'currency', None) or default_currency
+    return value, currency
+
 def extract_own_ibans(accounts):
     """Extract own IBANs from Bunq accounts for internal transfer detection."""
     ibans = set()
@@ -702,14 +733,19 @@ def get_accounts():
         
         accounts_data = []
         for account in accounts:
+            account_id = getattr(account, 'id_', None)
+            balance_value, balance_currency = parse_monetary_value(
+                getattr(account, 'balance', None),
+                context=f"account {account_id} balance"
+            )
             accounts_data.append({
-                'id': account.id_,
-                'description': account.description,
+                'id': account_id,
+                'description': getattr(account, 'description', None) or f"Account {account_id}",
                 'balance': {
-                    'value': float(account.balance.value),
-                    'currency': account.balance.currency
+                    'value': balance_value,
+                    'currency': balance_currency
                 },
-                'status': account.status
+                'status': getattr(account, 'status', None) or 'UNKNOWN'
             })
         
         logger.info(f"✅ Retrieved {len(accounts_data)} accounts")
@@ -821,7 +857,11 @@ def get_account_transactions(account_id, cutoff_date=None, sort_desc=True, own_i
     own_ibans = own_ibans or set()
     
     for payment in payments:
-        created = datetime.fromisoformat(payment.created.replace('Z', '+00:00'))
+        created_raw = getattr(payment, 'created', None)
+        if not created_raw:
+            logger.warning(f"⚠️ Payment {getattr(payment, 'id_', 'unknown')} missing created timestamp; skipping")
+            continue
+        created = datetime.fromisoformat(created_raw.replace('Z', '+00:00'))
         
         if cutoff_date and created < cutoff_date:
             if sort_desc:
@@ -836,18 +876,23 @@ def get_account_transactions(account_id, cutoff_date=None, sort_desc=True, own_i
             if alias_type == 'IBAN' and alias_value in own_ibans:
                 is_internal_transfer = True
         
-        category = categorize_transaction(payment.description, counterparty_alias, is_internal_transfer)
+        description = getattr(payment, 'description', None) or ''
+        amount_value, amount_currency = parse_monetary_value(
+            getattr(payment, 'amount', None),
+            context=f"payment {getattr(payment, 'id_', 'unknown')} amount"
+        )
+        category = categorize_transaction(description, counterparty_alias, is_internal_transfer)
         
         transactions.append({
-            'id': payment.id_,
+            'id': getattr(payment, 'id_', None),
             'date': created.isoformat(),
-            'amount': float(payment.amount.value),
-            'currency': payment.amount.currency,
-            'description': payment.description,
+            'amount': amount_value,
+            'currency': amount_currency,
+            'description': description,
             'counterparty': payment.counterparty_alias.display_name if payment.counterparty_alias else 'Unknown',
             'merchant': payment.merchant_reference if hasattr(payment, 'merchant_reference') else None,
             'category': category,
-            'type': payment.type_,
+            'type': getattr(payment, 'type_', None),
             'account_id': account_id,
             'account_name': account_name,
             'is_internal_transfer': is_internal_transfer
