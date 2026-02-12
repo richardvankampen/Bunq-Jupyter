@@ -95,7 +95,7 @@ curl http://192.168.1.100:5000
 1. Secret `bunq_basic_auth_password` (12+ chars)
 2. Secret `bunq_flask_secret_key` (64 chars hex)
 3. ALLOWED_ORIGINS properly configured
-4. SESSION_COOKIE_SECURE=true if using HTTPS
+4. SESSION_COOKIE_SECURE=true (default); zet alleen false bij lokale HTTP
 ```
 
 ---
@@ -208,14 +208,16 @@ printf "%s" "$DASHBOARD_PASSWORD" | docker secret create bunq_basic_auth_passwor
 BASIC_AUTH_USERNAME=admin
 
 # Session Settings
-SESSION_COOKIE_SECURE=true   # ⚠️ Only if using HTTPS!
+SESSION_COOKIE_SECURE=true   # veilige default (HTTPS/reverse proxy)
+# Alleen bij lokale HTTP:
+# SESSION_COOKIE_SECURE=false
 # HttpOnly/SameSite are enforced in code (api_proxy.py)
 
 # CORS (CRITICAL)
 ALLOWED_ORIGINS=https://bunq.yourdomain.com  # YOUR domain only!
 
 # Vaultwarden
-USE_VAULTWARDEN=true         # Always use Vaultwarden
+USE_VAULTWARDEN=true         # Preferred/default
 
 # Bunq
 BUNQ_ENVIRONMENT=PRODUCTION  # For real banking data
@@ -250,9 +252,14 @@ cd /volume1/docker/bunq-dashboard
 sh scripts/register_bunq_ip.sh
 ```
 
+**Alternatief via UI (P1):**
+- Open dashboard → Settings → `Admin Maintenance (P1)`
+- Klik `Reinit Bunq context` om installation/device opnieuw te registreren
+- Gebruik `Check egress IP` om te verifiëren welk publiek IP ge-whitelist moet zijn
+
 Dit script:
 - toont het actuele publieke egress-IP van de container
-- valideert `bunq_api_key` secret formaat
+- bij directe key-flow valideert het `bunq_api_key` secret formaat
 - maakt een nieuwe Bunq `ApiContext` (installation + device registration)
 - herstart de service en toont relevante logs
 
@@ -543,7 +550,7 @@ rm -rf /volume1/docker/bunq-dashboard/*
 - [ ] `ALLOWED_ORIGINS` set to specific domain/IP
 - [ ] `FLASK_DEBUG=false` in production
 - [ ] HTTPS configured (if using reverse proxy)
-- [ ] `SESSION_COOKIE_SECURE=true` (if using HTTPS)
+- [ ] `SESSION_COOKIE_SECURE=true` (aanbevolen/default; alleen false bij lokale HTTP)
 - [ ] Port 5000 NOT forwarded on router
 - [ ] Regular backups configured
 

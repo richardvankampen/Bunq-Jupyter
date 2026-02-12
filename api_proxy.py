@@ -537,7 +537,7 @@ cache = Cache(app, config={
 # Session configuration - CRITICAL for security
 app.config['SECRET_KEY'] = get_config('FLASK_SECRET_KEY', secrets.token_hex(32), 'flask_secret_key')
 app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevents JavaScript access
-app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'  # HTTPS only
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'True').lower() == 'true'  # HTTPS only
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF protection
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)  # Session expires after 24h
 
@@ -548,10 +548,14 @@ logger.info(f"⏱️  Session lifetime: 24 hours")
 # CORS Configuration - WITH CREDENTIALS SUPPORT
 ALLOWED_ORIGINS = [
     origin.strip()
-    for origin in os.getenv('ALLOWED_ORIGINS', 'http://localhost:5000').split(',')
+    for origin in os.getenv('ALLOWED_ORIGINS', 'https://bunq.jouwdomein.nl').split(',')
     if origin.strip()
 ]
 logger.info(f"🔒 CORS allowed origins: {ALLOWED_ORIGINS}")
+if app.config['SESSION_COOKIE_SECURE'] and any(origin.startswith('http://') for origin in ALLOWED_ORIGINS):
+    logger.warning("⚠️ SESSION_COOKIE_SECURE=true with HTTP origin(s): auth cookie may not be sent by browser")
+if (not app.config['SESSION_COOKIE_SECURE']) and any(origin.startswith('https://') for origin in ALLOWED_ORIGINS):
+    logger.warning("⚠️ SESSION_COOKIE_SECURE=false while HTTPS origin configured; set SESSION_COOKIE_SECURE=true")
 
 CORS(app, 
      origins=ALLOWED_ORIGINS, 
@@ -1226,10 +1230,10 @@ def get_api_key_from_vaultwarden():
         str: Bunq API key or None if retrieval failed
     """
     
-    use_vaultwarden = os.getenv('USE_VAULTWARDEN', 'false').lower() == 'true'
+    use_vaultwarden = os.getenv('USE_VAULTWARDEN', 'true').lower() == 'true'
     
     if not use_vaultwarden:
-        logger.info("📝 Vaultwarden disabled, using direct API key (env or secret)")
+        logger.warning("⚠️ Vaultwarden disabled: falling back to direct API key (env/secret)")
         api_key = get_config('BUNQ_API_KEY', '', 'bunq_api_key')
         if api_key:
             logger.info("✅ API key loaded from env/secret")
@@ -1300,6 +1304,94 @@ def get_api_key_from_vaultwarden():
         return None
 
 # ============================================
+# ADMIN/MAINTENANCE HELPERS
+# ============================================
+
+def refresh_api_key():
+    """Reload API key according to current auth mode (Vaultwarden preferred)."""
+    global API_KEY
+    API_KEY = get_api_key_from_vaultwarden()
+    return API_KEY
+
+def get_public_egress_ip(timeout_seconds=8):
+    """Best-effort public egress IP lookup from container runtime."""
+    try:
+        response = requests.get("https://api64.ipify.org", timeout=timeout_seconds)
+        response.raise_for_status()
+        return response.text.strip()
+    except Exception as exc:
+        logger.warning(f"⚠️ Unable to resolve public egress IP: {exc}")
+        return None
+
+def get_vaultwarden_status_snapshot():
+    """Runtime status snapshot for admin panel diagnostics (no secret leakage)."""
+    use_vaultwarden = os.getenv('USE_VAULTWARDEN', 'true').strip().lower() == 'true'
+    item_name = os.getenv('VAULTWARDEN_ITEM_NAME', 'Bunq API Key')
+    vault_url = os.getenv('VAULTWARDEN_URL', 'http://vaultwarden:80')
+    status = {
+        'enabled': use_vaultwarden,
+        'vault_url': vault_url,
+        'item_name': item_name,
+        'client_configured': False,
+        'token_ok': False,
+        'item_found': False,
+        'item_has_password': False,
+        'error': None,
+    }
+
+    if not use_vaultwarden:
+        status['error'] = 'Vaultwarden disabled (USE_VAULTWARDEN=false)'
+        return status
+
+    client_id = get_config('VAULTWARDEN_CLIENT_ID', None, 'vaultwarden_client_id')
+    client_secret = get_config('VAULTWARDEN_CLIENT_SECRET', None, 'vaultwarden_client_secret')
+    status['client_configured'] = bool(client_id and client_secret)
+    if not status['client_configured']:
+        status['error'] = 'Missing Vaultwarden client credentials'
+        return status
+
+    try:
+        token_response = requests.post(
+            f"{vault_url}/identity/connect/token",
+            data={
+                'grant_type': 'client_credentials',
+                'scope': 'api',
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'deviceType': os.getenv('VAULTWARDEN_DEVICE_TYPE', '22').strip(),
+                'deviceIdentifier': get_vaultwarden_device_identifier(),
+                'deviceName': os.getenv('VAULTWARDEN_DEVICE_NAME', 'Bunq Dashboard').strip(),
+            },
+            timeout=10,
+        )
+        token_response.raise_for_status()
+        access_token = token_response.json().get('access_token')
+        status['token_ok'] = bool(access_token)
+
+        if not access_token:
+            status['error'] = 'Vaultwarden token response missing access_token'
+            return status
+
+        items_response = requests.get(
+            f"{vault_url}/api/ciphers",
+            headers={'Authorization': f'Bearer {access_token}'},
+            timeout=10,
+        )
+        items_response.raise_for_status()
+        items = items_response.json().get('data', [])
+
+        for item in items:
+            if item.get('name') == item_name and item.get('type') == 1:
+                status['item_found'] = True
+                password = (item.get('login', {}) or {}).get('password')
+                status['item_has_password'] = bool(password)
+                break
+    except Exception as exc:
+        status['error'] = str(exc)
+
+    return status
+
+# ============================================
 # CONFIGURATION
 # ============================================
 
@@ -1328,13 +1420,25 @@ if not has_config('FLASK_SECRET_KEY', 'flask_secret_key'):
 # BUNQ API INITIALIZATION
 # ============================================
 
-def init_bunq():
-    """Initialize Bunq API context with READ-ONLY access"""
+def init_bunq(force_recreate=False, refresh_key=False):
+    """Initialize Bunq API context with READ-ONLY access."""
+    global API_KEY
+
+    if refresh_key:
+        API_KEY = get_api_key_from_vaultwarden()
+
     if not API_KEY:
         logger.warning("⚠️ No API key available, running in demo mode only")
         return False
     
     try:
+        if force_recreate and os.path.exists(CONFIG_FILE):
+            try:
+                os.remove(CONFIG_FILE)
+                logger.info(f"🧹 Removed existing Bunq context: {CONFIG_FILE}")
+            except Exception as remove_exc:
+                logger.warning(f"⚠️ Failed removing Bunq context '{CONFIG_FILE}': {remove_exc}")
+
         if not os.path.exists(CONFIG_FILE):
             logger.info("🔄 Creating new Bunq API context...")
             # Use positional args for compatibility across bunq-sdk versions
@@ -1392,6 +1496,95 @@ def health_check():
         'auth_configured': has_config('BASIC_AUTH_PASSWORD', 'basic_auth_password'),
         'history_store_enabled': DATA_DB_ENABLED,
         'fx_enabled': FX_ENABLED
+    })
+
+@app.route('/api/admin/status', methods=['GET'])
+@requires_auth
+@rate_limit('general')
+def get_admin_status():
+    """Admin maintenance status snapshot for the dashboard settings panel."""
+    context_exists = os.path.exists(CONFIG_FILE)
+    db_exists = os.path.exists(DATA_DB_PATH) if DATA_DB_PATH else False
+    vault_status = get_vaultwarden_status_snapshot()
+    use_vaultwarden = os.getenv('USE_VAULTWARDEN', 'true').strip().lower() == 'true'
+
+    response = {
+        'success': True,
+        'data': {
+            'environment': ENVIRONMENT_LABEL,
+            'api_initialized': bool(API_KEY),
+            'use_vaultwarden': use_vaultwarden,
+            'api_key_source': 'vaultwarden' if use_vaultwarden else 'direct-secret',
+            'vaultwarden': vault_status,
+            'context_file': CONFIG_FILE,
+            'context_exists': context_exists,
+            'history_store_enabled': DATA_DB_ENABLED,
+            'history_db_path': DATA_DB_PATH,
+            'history_db_exists': db_exists,
+            'session_cookie_secure': app.config['SESSION_COOKIE_SECURE'],
+            'allowed_origins': ALLOWED_ORIGINS,
+        }
+    }
+    return jsonify(response)
+
+@app.route('/api/admin/egress-ip', methods=['GET'])
+@requires_auth
+@rate_limit('general')
+def get_admin_egress_ip():
+    """Return current public egress IP as seen from the dashboard container."""
+    public_ip = get_public_egress_ip()
+    if not public_ip:
+        return jsonify({
+            'success': False,
+            'error': 'Unable to determine egress IP'
+        }), 503
+
+    return jsonify({
+        'success': True,
+        'data': {
+            'egress_ip': public_ip
+        }
+    })
+
+@app.route('/api/admin/bunq/reinitialize', methods=['POST'])
+@requires_auth
+@rate_limit('general')
+def reinitialize_bunq_context():
+    """
+    Force refresh Bunq API key (Vaultwarden/direct), recreate context and reload BunqContext.
+    Useful after Bunq API key rotation or IP whitelist updates.
+    """
+    payload = request.get_json(silent=True) or {}
+    force_recreate = parse_bool(payload.get('force_recreate'), default=True)
+    refresh_key = parse_bool(payload.get('refresh_key'), default=True)
+    clear_runtime_cache = parse_bool(payload.get('clear_runtime_cache'), default=True)
+
+    if clear_runtime_cache:
+        cache.clear()
+        _FX_RUNTIME_CACHE.clear()
+
+    success = init_bunq(force_recreate=force_recreate, refresh_key=refresh_key)
+    if not success:
+        return jsonify({
+            'success': False,
+            'error': 'Failed to reinitialize Bunq API context',
+            'api_initialized': False
+        }), 500
+
+    return jsonify({
+        'success': True,
+        'message': 'Bunq context reinitialized',
+        'data': {
+            'context_file': CONFIG_FILE,
+            'context_exists': os.path.exists(CONFIG_FILE),
+            'api_initialized': True,
+            'egress_ip': get_public_egress_ip(),
+            'api_key_source': (
+                'vaultwarden'
+                if os.getenv('USE_VAULTWARDEN', 'true').strip().lower() == 'true'
+                else 'direct-secret'
+            )
+        }
     })
 
 @app.route('/api/accounts', methods=['GET'])

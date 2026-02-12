@@ -333,6 +333,8 @@ docker secret ls | grep bunq_vaultwarden_client
 6. Redeploy: `sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'`
 ```
 
+Tip: in het dashboard kun je ook naar **Settings → Admin Maintenance (P1) → Check status** voor een snelle runtime check.
+
 #### C. Network Issues Between Containers
 ```bash
 # Test connectivity
@@ -428,7 +430,10 @@ sh scripts/register_bunq_ip.sh
 # In Bunq app: Profile -> Security -> API Keys
 # Ensure API key is active and allowlist includes that IP.
 
-# If you rotated API key, update secret first:
+# Via UI kan dit ook:
+# Settings -> Admin Maintenance (P1) -> Check egress IP / Reinit Bunq context
+
+# If you rotated API key AND use direct fallback mode (USE_VAULTWARDEN=false), update secret first:
 printf "Paste BUNQ API key: "
 stty -echo; IFS= read -r BUNQ_API_KEY; stty echo; echo
 CLEAN_KEY="$(printf '%s' "$BUNQ_API_KEY" | tr -d '\r\n')"
@@ -531,8 +536,9 @@ python3 -c "import secrets; print(secrets.token_hex(32))" | sudo docker secret c
 #### C. SESSION_COOKIE_SECURE Mismatch
 ```bash
 # Check .env:
-SESSION_COOKIE_SECURE=false  # For HTTP
-SESSION_COOKIE_SECURE=true   # For HTTPS
+SESSION_COOKIE_SECURE=true   # Recommended/default (HTTPS)
+# For local HTTP only:
+# SESSION_COOKIE_SECURE=false
 
 # Must match your access method!
 # If accessing via http://, set to false

@@ -525,6 +525,26 @@
                         <p class="setting-help">Login required to load accounts.</p>
                     </div>
                 </div>
+                <div class="setting-group admin-tools-group">
+                    <label>Admin Maintenance (P1)</label>
+                    <p class="setting-help">
+                        Vaultwarden-first onderhoudsacties: status check, egress IP detectie en Bunq context/IP herregistratie.
+                    </p>
+                    <div class="admin-tools-actions">
+                        <button type="button" class="admin-tool-btn" id="adminLoadStatus">
+                            <i class="fas fa-heartbeat"></i> Check status
+                        </button>
+                        <button type="button" class="admin-tool-btn" id="adminCheckEgressIp">
+                            <i class="fas fa-globe"></i> Check egress IP
+                        </button>
+                        <button type="button" class="admin-tool-btn admin-tool-btn-warn" id="adminReinitBunq">
+                            <i class="fas fa-sync-alt"></i> Reinit Bunq context
+                        </button>
+                    </div>
+                    <div id="adminStatusPanel" class="admin-status-panel">
+                        <p class="setting-help">Open eerst Settings en klik op <strong>Check status</strong>.</p>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn-primary" id="saveSettings">Save Settings</button>

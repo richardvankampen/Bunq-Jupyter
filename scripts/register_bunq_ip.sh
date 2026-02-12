@@ -32,7 +32,7 @@ import requests
 print(requests.get("https://api64.ipify.org", timeout=10).text.strip())
 PY
 
-USE_VAULTWARDEN="$($DOCKER_CMD exec "${CONTAINER_ID}" sh -c 'echo "${USE_VAULTWARDEN:-false}"' | tr '[:upper:]' '[:lower:]')"
+USE_VAULTWARDEN="$($DOCKER_CMD exec "${CONTAINER_ID}" sh -c 'echo "${USE_VAULTWARDEN:-true}"' | tr '[:upper:]' '[:lower:]')"
 echo "[2/6] Auth mode: USE_VAULTWARDEN=${USE_VAULTWARDEN}"
 
 if [ "${USE_VAULTWARDEN}" = "false" ]; then

@@ -24,6 +24,7 @@ let isAuthenticated = false;
 let accountsList = [];
 let balanceMetrics = null;
 let balanceHistoryData = null;
+let adminStatusData = null;
 let selectedAccountIds = new Set();
 const chartRegistry = {
     chartjs: {},
@@ -508,6 +509,9 @@ function setupEventListeners() {
     document.getElementById('closeSettings')?.addEventListener('click', closeSettings);
     document.getElementById('saveSettings')?.addEventListener('click', saveSettings);
     document.getElementById('closeBalanceDetail')?.addEventListener('click', closeBalanceDetail);
+    document.getElementById('adminLoadStatus')?.addEventListener('click', loadAdminStatus);
+    document.getElementById('adminCheckEgressIp')?.addEventListener('click', checkAdminEgressIp);
+    document.getElementById('adminReinitBunq')?.addEventListener('click', reinitializeBunqContext);
     
     // Time range
     document.getElementById('timeRange')?.addEventListener('change', (e) => {
@@ -2212,6 +2216,11 @@ function openSettings() {
     renderAccountsFilter(accountsList);
     
     document.getElementById('settingsModal')?.classList.add('active');
+    if (isAuthenticated) {
+        loadAdminStatus();
+    } else {
+        renderAdminStatusPanel(null, 'Login required om admin onderhoudsacties te gebruiken.', true);
+    }
 }
 
 function closeSettings() {
@@ -2243,6 +2252,153 @@ function saveSettings() {
     
     console.log('✅ Settings saved');
     refreshData();
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function renderAdminStatusPanel(statusData = null, notice = '', isError = false, egressIp = '') {
+    const panel = document.getElementById('adminStatusPanel');
+    if (!panel) return;
+
+    if (!statusData) {
+        const cls = isError ? 'admin-status-error' : '';
+        panel.innerHTML = `<p class="setting-help ${cls}">${escapeHtml(notice || 'Nog geen admin status geladen.')}</p>`;
+        return;
+    }
+
+    const vault = statusData.vaultwarden || {};
+    const allowedOrigins = Array.isArray(statusData.allowed_origins)
+        ? statusData.allowed_origins.join(', ')
+        : '';
+    const rows = [
+        ['API status', statusData.api_initialized ? 'Initialized' : 'Not initialized', !statusData.api_initialized],
+        ['API key source', statusData.api_key_source || '-'],
+        ['Vaultwarden enabled', vault.enabled ? 'Yes' : 'No', !vault.enabled],
+        ['Vault token', vault.token_ok ? 'OK' : 'Failed', vault.enabled && !vault.token_ok],
+        ['Vault item', vault.item_found ? 'Found' : 'Not found', vault.enabled && !vault.item_found],
+        [
+            'Vault item password',
+            vault.item_has_password ? 'Present' : 'Missing',
+            vault.enabled && vault.item_found && !vault.item_has_password
+        ],
+        ['Context file', statusData.context_exists ? 'Present' : 'Missing', !statusData.context_exists],
+        ['Session cookie secure', statusData.session_cookie_secure ? 'True' : 'False', !statusData.session_cookie_secure],
+        ['Allowed origins', allowedOrigins || '-', false],
+    ];
+
+    if (egressIp) {
+        rows.push(['Egress IP', egressIp, false]);
+    }
+    if (vault.error) {
+        rows.push(['Vaultwarden error', vault.error, true]);
+    }
+    if (notice) {
+        rows.push(['Action', notice, isError]);
+    }
+
+    panel.innerHTML = rows.map(([label, value, rowError]) => `
+        <div class="admin-status-row">
+            <span class="admin-status-label">${escapeHtml(label)}</span>
+            <span class="admin-status-value ${rowError ? 'admin-status-error' : ''}">${escapeHtml(value)}</span>
+        </div>
+    `).join('');
+}
+
+async function runAdminAction(buttonId, busyHtml, actionFn) {
+    const button = document.getElementById(buttonId);
+    const originalHtml = button ? button.innerHTML : '';
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = busyHtml;
+    }
+    try {
+        await actionFn();
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        }
+    }
+}
+
+async function loadAdminStatus() {
+    if (!isAuthenticated) {
+        renderAdminStatusPanel(null, 'Login required om admin status te laden.', true);
+        return;
+    }
+
+    await runAdminAction('adminLoadStatus', '<i class="fas fa-spinner fa-spin"></i> Loading...', async () => {
+        const response = await authenticatedFetch(`${CONFIG.apiEndpoint}/admin/status`);
+        if (!response || !response.success) {
+            adminStatusData = null;
+            renderAdminStatusPanel(null, 'Admin status ophalen mislukt.', true);
+            return;
+        }
+        adminStatusData = response.data;
+        renderAdminStatusPanel(adminStatusData);
+    });
+}
+
+async function checkAdminEgressIp() {
+    if (!isAuthenticated) {
+        renderAdminStatusPanel(adminStatusData, 'Login required om egress IP te checken.', true);
+        return;
+    }
+
+    await runAdminAction('adminCheckEgressIp', '<i class="fas fa-spinner fa-spin"></i> Checking...', async () => {
+        const response = await authenticatedFetch(`${CONFIG.apiEndpoint}/admin/egress-ip`);
+        if (!response || !response.success) {
+            renderAdminStatusPanel(adminStatusData, 'Egress IP bepalen mislukt.', true);
+            return;
+        }
+        const egressIp = response?.data?.egress_ip || '';
+        renderAdminStatusPanel(adminStatusData, `Egress IP resolved: ${egressIp}`, false, egressIp);
+    });
+}
+
+async function reinitializeBunqContext() {
+    if (!isAuthenticated) {
+        renderAdminStatusPanel(adminStatusData, 'Login required om Bunq context te herinitialiseren.', true);
+        return;
+    }
+
+    const confirmed = window.confirm(
+        'Dit verwijdert de lokale Bunq context en maakt een nieuwe context (installation + device registration). Doorgaan?'
+    );
+    if (!confirmed) {
+        return;
+    }
+
+    await runAdminAction('adminReinitBunq', '<i class="fas fa-spinner fa-spin"></i> Running...', async () => {
+        const response = await authenticatedFetch(`${CONFIG.apiEndpoint}/admin/bunq/reinitialize`, {
+            method: 'POST',
+            body: JSON.stringify({
+                force_recreate: true,
+                refresh_key: true,
+                clear_runtime_cache: true
+            })
+        });
+        if (!response || !response.success) {
+            renderAdminStatusPanel(adminStatusData, 'Bunq context herinitialisatie mislukt.', true);
+            return;
+        }
+
+        const egressIp = response?.data?.egress_ip || '';
+        await loadAdminStatus();
+        renderAdminStatusPanel(
+            adminStatusData,
+            'Bunq context opnieuw geïnitialiseerd. Controleer bunq whitelist met het getoonde egress IP.',
+            false,
+            egressIp
+        );
+    });
 }
 
 function toggleTheme() {

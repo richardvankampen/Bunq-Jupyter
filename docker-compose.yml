@@ -3,7 +3,6 @@ version: '3.8'
 services:
   bunq-dashboard:
     image: bunq-dashboard:local
-    build: .
 
     ports:
       # Single port for both API and Frontend (simplified architecture)
@@ -17,8 +16,8 @@ services:
       VAULTWARDEN_ITEM_NAME: "${VAULTWARDEN_ITEM_NAME:-Bunq API Key}"
       USE_VAULTWARDEN: "${USE_VAULTWARDEN:-true}"
       BUNQ_ENVIRONMENT: "${BUNQ_ENVIRONMENT:-PRODUCTION}"
-      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:5000}"
-      SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-https://bunq.jouwdomein.nl}"
+      SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-true}"
       FLASK_DEBUG: "${FLASK_DEBUG:-false}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       CACHE_ENABLED: "${CACHE_ENABLED:-true}"
@@ -43,8 +42,8 @@ services:
       - source: bunq_vaultwarden_client_secret
         target: vaultwarden_client_secret
       # Optional: only when USE_VAULTWARDEN=false
-      - source: bunq_api_key
-        target: bunq_api_key
+      # - source: bunq_api_key
+      #   target: bunq_api_key
 
     volumes:
       # Persistent storage for Bunq context and logs (Synology bind mounts)
@@ -104,5 +103,5 @@ secrets:
   bunq_vaultwarden_client_secret:
     external: true
   # Optional: only when USE_VAULTWARDEN=false
-  bunq_api_key:
-    external: true
+  # bunq_api_key:
+  #   external: true

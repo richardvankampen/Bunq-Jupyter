@@ -292,8 +292,8 @@ Maak `/volume1/docker/bunq-dashboard/.env` met **niet‑gevoelige** settings.
 | `VAULTWARDEN_ITEM_NAME` | Naam van het Vault item met je Bunq API key | `Bunq API Key` |
 | `USE_VAULTWARDEN` | Gebruik Vaultwarden i.p.v. directe API key | `true` |
 | `BUNQ_ENVIRONMENT` | Bunq omgeving | `PRODUCTION` (of `SANDBOX` voor test) |
-| `ALLOWED_ORIGINS` | Toegestane frontend origins voor CORS | `http://<NAS-IP>:5000` (eventueel meerdere, komma‑gescheiden) |
-| `SESSION_COOKIE_SECURE` | Alleen veilige cookies via HTTPS | `false` voor HTTP, `true` als je HTTPS/reverse proxy gebruikt |
+| `ALLOWED_ORIGINS` | Toegestane frontend origins voor CORS | `https://bunq.jouwdomein.nl` (of `http://<NAS-IP>:5000` bij lokale HTTP) |
+| `SESSION_COOKIE_SECURE` | Alleen veilige cookies via HTTPS | `true` (aanbevolen/default), alleen `false` bij lokale HTTP |
 
 **Let op (cookie domein):** De session cookie wordt gezet op het domein waarmee je het dashboard opent.  
 Voorbeelden:  
@@ -330,11 +330,12 @@ VAULTWARDEN_URL=http://vaultwarden:80
 VAULTWARDEN_ITEM_NAME="Bunq API Key"
 USE_VAULTWARDEN=true
 BUNQ_ENVIRONMENT=PRODUCTION
-ALLOWED_ORIGINS=http://192.168.1.100:5000
-# Of bij HTTPS/reverse proxy:
-# ALLOWED_ORIGINS=https://bunq.jouwdomein.nl
-SESSION_COOKIE_SECURE=false
-# of true bij HTTPS
+ALLOWED_ORIGINS=https://bunq.jouwdomein.nl
+# Alleen bij lokale HTTP:
+# ALLOWED_ORIGINS=http://192.168.1.100:5000
+SESSION_COOKIE_SECURE=true
+# Alleen bij lokale HTTP:
+# SESSION_COOKIE_SECURE=false
 LOG_LEVEL=INFO
 FLASK_DEBUG=false
 DATA_DB_ENABLED=true
@@ -386,6 +387,8 @@ sudo docker network connect bunq-net vaultwarden
 |---|---|---|
 | `bunq_api_key` | Bunq API key (direct) | Alleen gebruiken als je geen Vaultwarden gebruikt |
 
+**Aanbevolen werkwijze:** laat `USE_VAULTWARDEN=true` staan en gebruik `bunq_api_key` alleen als tijdelijke nood-fallback.
+
 **Secrets aanmaken:**
 ```bash
 # Let op: vervang de voorbeeldwaarden door je eigen echte waarden.
@@ -424,7 +427,6 @@ version: '3.8'
 services:
   bunq-dashboard:
     image: bunq-dashboard:local
-    build: .
 
     ports:
       - "5000:5000"  # Dashboard + API
@@ -435,8 +437,8 @@ services:
       VAULTWARDEN_ITEM_NAME: "${VAULTWARDEN_ITEM_NAME:-Bunq API Key}"
       USE_VAULTWARDEN: "${USE_VAULTWARDEN:-true}"
       BUNQ_ENVIRONMENT: "${BUNQ_ENVIRONMENT:-PRODUCTION}"
-      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:5000}"
-      SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-https://bunq.jouwdomein.nl}"
+      SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-true}"
       FLASK_DEBUG: "${FLASK_DEBUG:-false}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       CACHE_ENABLED: "${CACHE_ENABLED:-true}"
@@ -667,6 +669,18 @@ sudo docker service logs -f bunq_bunq-dashboard
 # Vaultwarden logs
 sudo docker logs vaultwarden
 ```
+
+### Admin onderhoud via Dashboard (P1)
+
+In **Settings → Admin Maintenance (P1)** kun je als ingelogde admin:
+- `Check status`: runtime status van Vaultwarden, context file, cookie/CORS instellingen
+- `Check egress IP`: huidig publiek uitgaand IP van de container
+- `Reinit Bunq context`: context verwijderen + opnieuw opbouwen (installation/device registration)
+
+Gebruik `Reinit Bunq context` na:
+- API key rotatie
+- IP whitelist wijziging
+- errors zoals `Incorrect API key or IP address`
 
 ### Rotate Bunq API Key
 
