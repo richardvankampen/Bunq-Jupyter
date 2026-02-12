@@ -515,6 +515,26 @@ function setupEventListeners() {
         });
     });
 
+    document.querySelectorAll('.clickable-kpi-detail').forEach((card) => {
+        card.addEventListener('click', (event) => {
+            if (event.target.closest('button')) return;
+            const detailType = card.getAttribute('data-kpi-detail');
+            if (detailType) {
+                showTransactionDetail(detailType);
+            }
+        });
+    });
+
+    document.querySelectorAll('.action-btn[data-viz-detail]').forEach((button) => {
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const detailType = button.getAttribute('data-viz-detail');
+            if (detailType) {
+                showTransactionDetail(detailType);
+            }
+        });
+    });
+
     document.getElementById('balanceDetailModal')?.addEventListener('click', (event) => {
         if (event.target.id === 'balanceDetailModal') {
             closeBalanceDetail();
@@ -766,7 +786,15 @@ function classifyAccountType(account) {
     }
 
     const fingerprint = `${account?.description || ''} ${account?.account_class || ''}`.toLowerCase();
-    if (fingerprint.includes('savings') || fingerprint.includes('spaar')) return 'savings';
+    if (
+        fingerprint.includes('savings')
+        || fingerprint.includes('spaar')
+        || fingerprint.includes('reserve')
+        || fingerprint.includes('buffer')
+        || fingerprint.includes('vakantie')
+        || fingerprint.includes('doel')
+        || fingerprint.includes('goal')
+    ) return 'savings';
     if (fingerprint.includes('investment') || fingerprint.includes('crypto') || fingerprint.includes('belegging')) return 'investment';
     return 'checking';
 }
@@ -986,7 +1014,8 @@ function formatCurrency(value) {
     return new Intl.NumberFormat('nl-NL', {
         style: 'currency',
         currency: 'EUR',
-        maximumFractionDigits: 0
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
     }).format(value);
 }
 
@@ -1062,6 +1091,70 @@ function calculateSeriesChange(series) {
     return ((last - first) / Math.abs(first)) * 100;
 }
 
+function formatShortDate(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit' });
+}
+
+function renderMetricMiniChart(canvasId, points, color) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    const labels = (points || []).map((point) => formatShortDate(point.date));
+    const values = (points || []).map((point) => Number(point.total) || 0);
+
+    if (chartRegistry.chartjs[canvasId]) {
+        chartRegistry.chartjs[canvasId].destroy();
+    }
+
+    chartRegistry.chartjs[canvasId] = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                data: values,
+                borderColor: color,
+                backgroundColor: hexToRgba(color, 0.12),
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.3,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (context) => formatCurrency(context.parsed.y)
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    display: true,
+                    ticks: {
+                        color: '#94a3b8',
+                        maxTicksLimit: 4
+                    },
+                    grid: { display: false }
+                },
+                y: {
+                    display: true,
+                    ticks: {
+                        color: '#94a3b8',
+                        maxTicksLimit: 4,
+                        callback: (tickValue) => formatCurrency(Number(tickValue))
+                    },
+                    grid: { color: 'rgba(148,163,184,0.12)' }
+                }
+            }
+        }
+    });
+}
+
 function renderBalanceKPIs(metrics) {
     const checkingEl = document.getElementById('checkingBalance');
     const savingsEl = document.getElementById('savingsBalance');
@@ -1088,19 +1181,12 @@ function renderBalanceKPIs(metrics) {
     if (checkingTrendEl) checkingTrendEl.textContent = `${checkingChange.toFixed(1)}%`;
     if (savingsTrendEl) savingsTrendEl.textContent = `${savingsChange.toFixed(1)}%`;
 
-    renderSparkline('checkingSparkline', checkingSeries, '#38bdf8');
-    renderSparkline('savingsBalanceSparkline', savingsSeries, '#22c55e');
+    renderMetricMiniChart('checkingSparkline', metrics.series.checking || [], '#38bdf8');
+    renderMetricMiniChart('savingsBalanceSparkline', metrics.series.savings || [], '#22c55e');
 }
 
 function showBalanceDetail(type) {
     if (!balanceMetrics) return;
-
-    const titleEl = document.getElementById('balanceDetailTitle');
-    const summaryEl = document.getElementById('balanceDetailSummary');
-    const listEl = document.getElementById('balanceDetailList');
-    const chartEl = document.getElementById('balanceDetailChart');
-    const modalEl = document.getElementById('balanceDetailModal');
-    if (!titleEl || !summaryEl || !listEl || !chartEl || !modalEl) return;
 
     const labels = {
         checking: 'Betaalrekeningen',
@@ -1114,19 +1200,15 @@ function showBalanceDetail(type) {
         ? ` (${balanceMetrics.nonEurCount} non-EUR rekening(en) uitgesloten)`
         : '';
 
-    titleEl.innerHTML = `<i class="fas fa-wallet"></i> ${label} - Verdeling`;
-    summaryEl.textContent = `Totaal: ${formatCurrency(total)}${nonEurNote}`;
+    const rows = accounts.length
+        ? accounts.map((acc) => ({
+            label: acc.description || `Account ${acc.id}`,
+            value: formatCurrency(acc.balanceValue)
+        }))
+        : [{ label: 'Geen EUR-rekeningen beschikbaar.', value: '' }];
 
-    listEl.innerHTML = accounts.length
-        ? accounts.map((acc) => `
-            <div class="balance-detail-row">
-                <span class="balance-detail-row-name">${acc.description || `Account ${acc.id}`}</span>
-                <span class="balance-detail-row-value">${formatCurrency(acc.balanceValue)}</span>
-            </div>
-          `).join('')
-        : '<div class="balance-detail-row"><span class="balance-detail-row-name">Geen EUR-rekeningen beschikbaar.</span><span></span></div>';
-
-    if (accounts.length && window.Plotly) {
+    let chartConfig = null;
+    if (accounts.length) {
         const trace = {
             type: 'bar',
             orientation: 'h',
@@ -1151,17 +1233,215 @@ function showBalanceDetail(type) {
             xaxis: { gridcolor: 'rgba(255,255,255,0.08)' },
             yaxis: { automargin: true }
         };
-        Plotly.react(chartEl, [trace], layout, { displayModeBar: false, responsive: true });
-    } else if (window.Plotly) {
-        Plotly.purge(chartEl);
+        chartConfig = { trace, layout };
     }
 
-    modalEl.classList.add('active');
+    openDetailModal({
+        title: `<i class="fas fa-wallet"></i> ${label} - Verdeling`,
+        summary: `Totaal: ${formatCurrency(total)}${nonEurNote}`,
+        rows,
+        chart: chartConfig
+    });
 }
 
 function closeBalanceDetail() {
     const modal = document.getElementById('balanceDetailModal');
     if (modal) modal.classList.remove('active');
+}
+
+function openDetailModal({ title, summary, rows, chart }) {
+    const titleEl = document.getElementById('balanceDetailTitle');
+    const summaryEl = document.getElementById('balanceDetailSummary');
+    const listEl = document.getElementById('balanceDetailList');
+    const chartEl = document.getElementById('balanceDetailChart');
+    const modalEl = document.getElementById('balanceDetailModal');
+    if (!titleEl || !summaryEl || !listEl || !chartEl || !modalEl) return;
+
+    titleEl.innerHTML = title || '<i class="fas fa-chart-bar"></i> Detail';
+    summaryEl.textContent = summary || '';
+    listEl.innerHTML = (rows || []).map((row) => `
+        <div class="balance-detail-row">
+            <span class="balance-detail-row-name">${row.label}</span>
+            <span class="balance-detail-row-value">${row.value}</span>
+        </div>
+    `).join('');
+
+    if (chart && window.Plotly) {
+        Plotly.react(chartEl, [chart.trace], chart.layout, { displayModeBar: false, responsive: true });
+        chartEl.style.display = 'block';
+    } else if (window.Plotly) {
+        Plotly.purge(chartEl);
+        chartEl.style.display = 'none';
+    }
+
+    modalEl.classList.add('active');
+}
+
+function getCurrentNormalizedTransactions() {
+    if (!Array.isArray(transactionsData)) return [];
+    const filtered = applyClientFilters(transactionsData);
+    return normalizeTransactions(filtered);
+}
+
+function buildTransactionRows(transactions, options = {}) {
+    const { limit = 200, includeAccount = true } = options;
+    const accountById = new Map((accountsList || []).map((account) => [String(account.id), account]));
+    return [...transactions]
+        .sort((a, b) => b.date - a.date)
+        .slice(0, limit)
+        .map((transaction) => {
+            const account = accountById.get(String(transaction.account_id));
+            const accountLabel = includeAccount
+                ? ` · ${account?.description || `Rekening ${transaction.account_id}`}`
+                : '';
+            const label = `${transaction.date.toLocaleDateString('nl-NL')} · ${transaction.merchant || transaction.description || 'Onbekend'}${accountLabel}`;
+            return {
+                label,
+                value: formatCurrency(transaction.amount)
+            };
+        });
+}
+
+function buildDailySeries(transactions, pickValue) {
+    const perDay = new Map();
+    transactions.forEach((transaction) => {
+        const key = transaction.date.toISOString().slice(0, 10);
+        perDay.set(key, (perDay.get(key) || 0) + pickValue(transaction));
+    });
+    return Array.from(perDay.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([date, value]) => ({ date: new Date(`${date}T00:00:00`), value }));
+}
+
+function showTransactionDetail(detailType) {
+    const transactions = getCurrentNormalizedTransactions();
+
+    if (!transactions.length) {
+        openDetailModal({
+            title: '<i class="fas fa-info-circle"></i> Detail',
+            summary: 'Geen data beschikbaar voor de geselecteerde periode.',
+            rows: [{ label: 'Geen transacties gevonden.', value: '' }],
+            chart: null
+        });
+        return;
+    }
+
+    if (detailType === 'income' || detailType === 'expenses') {
+        const isIncome = detailType === 'income';
+        const subset = transactions.filter((transaction) => isIncome ? transaction.amount > 0 : transaction.amount < 0);
+        const total = subset.reduce((sum, transaction) => sum + (isIncome ? transaction.amount : Math.abs(transaction.amount)), 0);
+        const daily = buildDailySeries(subset, (transaction) => isIncome ? transaction.amount : Math.abs(transaction.amount));
+        const trace = {
+            type: 'scatter',
+            mode: 'lines+markers',
+            x: daily.map((point) => point.date),
+            y: daily.map((point) => point.value),
+            line: { color: isIncome ? '#22c55e' : '#ef4444', width: 2 },
+            fill: 'tozeroy',
+            fillcolor: isIncome ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)',
+            hovertemplate: '%{x|%d-%m-%Y}<br>%{y:.2f} EUR<extra></extra>'
+        };
+        const layout = {
+            margin: { t: 10, r: 20, l: 40, b: 30 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#cbd5f5' },
+            xaxis: { showgrid: false },
+            yaxis: { gridcolor: 'rgba(255,255,255,0.08)' }
+        };
+
+        openDetailModal({
+            title: `<i class="fas ${isIncome ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down'}"></i> ${isIncome ? 'Inkomsten' : 'Uitgaven'} - geselecteerde periode`,
+            summary: `${subset.length} transacties · totaal ${formatCurrency(total)}`,
+            rows: buildTransactionRows(subset),
+            chart: { trace, layout }
+        });
+        return;
+    }
+
+    if (detailType === 'savings-transfers') {
+        const savingsIds = new Set(
+            (accountsList || [])
+                .filter((account) => classifyAccountType(account) === 'savings')
+                .map((account) => String(account.id))
+        );
+        const subset = transactions.filter((transaction) => savingsIds.has(String(transaction.account_id)));
+        const deposits = subset.filter((transaction) => transaction.amount > 0).reduce((sum, transaction) => sum + transaction.amount, 0);
+        const withdrawals = Math.abs(subset.filter((transaction) => transaction.amount < 0).reduce((sum, transaction) => sum + transaction.amount, 0));
+        const daily = buildDailySeries(subset, (transaction) => transaction.amount);
+
+        const trace = {
+            type: 'bar',
+            x: daily.map((point) => point.date),
+            y: daily.map((point) => point.value),
+            marker: { color: daily.map((point) => point.value >= 0 ? '#22c55e' : '#ef4444') },
+            hovertemplate: '%{x|%d-%m-%Y}<br>%{y:.2f} EUR<extra></extra>'
+        };
+        const layout = {
+            margin: { t: 10, r: 20, l: 40, b: 30 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#cbd5f5' },
+            xaxis: { showgrid: false },
+            yaxis: { gridcolor: 'rgba(255,255,255,0.08)' }
+        };
+
+        openDetailModal({
+            title: '<i class="fas fa-piggy-bank"></i> Spaarrekening mutaties',
+            summary: `${subset.length} mutaties · stortingen ${formatCurrency(deposits)} · opnames ${formatCurrency(withdrawals)}`,
+            rows: buildTransactionRows(subset),
+            chart: { trace, layout }
+        });
+        return;
+    }
+
+    if (detailType === 'money-flow') {
+        const flowByCategory = new Map();
+        transactions.forEach((transaction) => {
+            const category = transaction.category || 'Overig';
+            if (!flowByCategory.has(category)) {
+                flowByCategory.set(category, { income: 0, expense: 0 });
+            }
+            const bucket = flowByCategory.get(category);
+            if (transaction.amount >= 0) bucket.income += transaction.amount;
+            else bucket.expense += Math.abs(transaction.amount);
+        });
+
+        const rows = Array.from(flowByCategory.entries())
+            .map(([category, values]) => ({
+                category,
+                income: values.income,
+                expense: values.expense,
+                net: values.income - values.expense
+            }))
+            .sort((a, b) => (b.expense + b.income) - (a.expense + a.income));
+
+        const trace = {
+            type: 'bar',
+            x: rows.map((row) => row.category),
+            y: rows.map((row) => row.net),
+            marker: { color: rows.map((row) => row.net >= 0 ? '#22c55e' : '#ef4444') },
+            hovertemplate: '%{x}<br>Net: %{y:.2f} EUR<extra></extra>'
+        };
+        const layout = {
+            margin: { t: 10, r: 20, l: 40, b: 70 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#cbd5f5' },
+            xaxis: { tickangle: -30 },
+            yaxis: { gridcolor: 'rgba(255,255,255,0.08)' }
+        };
+
+        openDetailModal({
+            title: '<i class="fas fa-project-diagram"></i> Money Flow detail',
+            summary: `Categorieën: ${rows.length}`,
+            rows: rows.map((row) => ({
+                label: `${row.category} · In ${formatCurrency(row.income)} · Uit ${formatCurrency(row.expense)}`,
+                value: `Net ${formatCurrency(row.net)}`
+            })),
+            chart: { trace, layout }
+        });
+    }
 }
 
 function renderSparkline(canvasId, data, color) {
@@ -1382,63 +1662,77 @@ function renderSankeyChart(data) {
 function renderSunburstChart(data) {
     const container = document.getElementById('sunburstChart');
     if (!container) return;
-    
-    const categoryTotals = {};
-    const merchantTotals = {};
-    
-    data.forEach(t => {
-        const amount = t.amount;
-        const category = t.category;
-        const merchant = t.merchant || 'Unknown';
-        if (!categoryTotals[category]) categoryTotals[category] = 0;
-        if (!merchantTotals[category]) merchantTotals[category] = {};
-        
-        if (amount < 0) {
-            categoryTotals[category] += Math.abs(amount);
-            merchantTotals[category][merchant] = (merchantTotals[category][merchant] || 0) + Math.abs(amount);
-        } else {
-            categoryTotals[category] += amount;
+
+    const incomeByCategory = new Map();
+    const expenseByCategory = new Map();
+    const merchantByCategory = new Map();
+
+    data.forEach((transaction) => {
+        const category = transaction.category || 'Overig';
+        const merchant = transaction.merchant || 'Unknown';
+        if (transaction.amount >= 0) {
+            incomeByCategory.set(category, (incomeByCategory.get(category) || 0) + transaction.amount);
+            return;
         }
-    });
-    
-    const labels = ['All', 'Income', 'Expenses'];
-    const parents = ['', 'All', 'All'];
-    const values = [0, 0, 0];
-    
-    Object.entries(categoryTotals).forEach(([cat, total]) => {
-        const isIncome = data.some(t => t.category === cat && t.amount > 0);
-        labels.push(cat);
-        parents.push(isIncome ? 'Income' : 'Expenses');
-        values.push(total);
-        if (isIncome) values[1] += total;
-        else values[2] += total;
-    });
-    values[0] = values[1] + values[2];
-    
-    Object.entries(merchantTotals).forEach(([cat, merchants]) => {
-        const topMerchants = Object.entries(merchants)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 6);
-        topMerchants.forEach(([merchant, total]) => {
-            labels.push(merchant);
-            parents.push(cat);
-            values.push(total);
-        });
+        const expense = Math.abs(transaction.amount);
+        expenseByCategory.set(category, (expenseByCategory.get(category) || 0) + expense);
+        if (!merchantByCategory.has(category)) {
+            merchantByCategory.set(category, new Map());
+        }
+        const merchantMap = merchantByCategory.get(category);
+        merchantMap.set(merchant, (merchantMap.get(merchant) || 0) + expense);
     });
 
-    const labelColors = labels.map((label, index) => {
-        if (label === 'All') return '#334155';
-        if (label === 'Income') return '#22c55e';
-        if (label === 'Expenses') return '#ef4444';
-        const parent = parents[index];
-        if (parent === 'Income' || parent === 'Expenses') {
-            return getCategoryColor(label);
-        }
-        return hexToRgba(getCategoryColor(parent), 0.82);
-    });
+    const labels = [];
+    const ids = [];
+    const parents = [];
+    const values = [];
+    const colors = [];
+
+    const pushNode = (id, label, parent, value, color) => {
+        ids.push(id);
+        labels.push(label);
+        parents.push(parent);
+        values.push(value);
+        colors.push(color);
+    };
+
+    const totalIncome = Array.from(incomeByCategory.values()).reduce((sum, amount) => sum + amount, 0);
+    const totalExpenses = Array.from(expenseByCategory.values()).reduce((sum, amount) => sum + amount, 0);
+
+    pushNode('root', 'All', '', totalIncome + totalExpenses, '#334155');
+    pushNode('income', 'Income', 'root', totalIncome, '#22c55e');
+    pushNode('expenses', 'Expenses', 'root', totalExpenses, '#ef4444');
+
+    Array.from(incomeByCategory.entries())
+        .sort((a, b) => b[1] - a[1])
+        .forEach(([category, amount]) => {
+            pushNode(`income:${category}`, category, 'income', amount, getCategoryColor(category));
+        });
+
+    Array.from(expenseByCategory.entries())
+        .sort((a, b) => b[1] - a[1])
+        .forEach(([category, amount]) => {
+            const categoryId = `expense:${category}`;
+            const categoryColor = getCategoryColor(category);
+            pushNode(categoryId, category, 'expenses', amount, categoryColor);
+
+            const merchants = Array.from((merchantByCategory.get(category) || new Map()).entries())
+                .sort((a, b) => b[1] - a[1]);
+            merchants.forEach(([merchant, merchantAmount]) => {
+                pushNode(
+                    `${categoryId}:${merchant}`,
+                    merchant,
+                    categoryId,
+                    merchantAmount,
+                    hexToRgba(categoryColor, 0.82)
+                );
+            });
+        });
 
     const trace = {
         type: 'sunburst',
+        ids,
         labels,
         parents,
         values,
@@ -1446,7 +1740,7 @@ function renderSunburstChart(data) {
         maxdepth: 3,
         insidetextorientation: 'radial',
         marker: {
-            colors: labelColors,
+            colors,
             line: {
                 color: 'rgba(15, 23, 42, 0.9)',
                 width: 1.4

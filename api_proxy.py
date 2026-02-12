@@ -100,7 +100,12 @@ def _is_monetary_list_endpoint(name, candidate):
 
 def discover_monetary_account_endpoints():
     """Discover monetary-account endpoints ordered by preference."""
-    direct_candidates = ('MonetaryAccountBank', 'MonetaryAccount')
+    direct_candidates = (
+        'MonetaryAccountBank',
+        'MonetaryAccountSavings',
+        'MonetaryAccountInvestment',
+        'MonetaryAccount',
+    )
     discovered = []
     seen = set()
 
@@ -171,17 +176,35 @@ def list_monetary_accounts():
     if not candidates:
         raise RuntimeError('bunq-sdk missing monetary account endpoint')
 
+    merged_accounts = []
+    seen_account_ids = set()
     last_exc = None
     for name, account_endpoint in candidates:
         try:
-            accounts = account_endpoint.list().value
-            if _MONETARY_ACCOUNT_ENDPOINT is not account_endpoint:
-                logger.info(f"Using bunq endpoint class: {name}")
-            _MONETARY_ACCOUNT_ENDPOINT = account_endpoint
-            return accounts
+            result = account_endpoint.list()
+            accounts = getattr(result, 'value', result)
+            if accounts is None:
+                accounts = []
+
+            accounts_added = 0
+            for account in accounts:
+                account_id = get_obj_field(account, 'id_', 'id')
+                dedupe_key = account_id if account_id is not None else f"obj:{id(account)}"
+                if dedupe_key in seen_account_ids:
+                    continue
+                seen_account_ids.add(dedupe_key)
+                merged_accounts.append(account)
+                accounts_added += 1
+
+            if _MONETARY_ACCOUNT_ENDPOINT is None:
+                _MONETARY_ACCOUNT_ENDPOINT = account_endpoint
+            logger.info(f"Using bunq endpoint class: {name} (+{accounts_added} accounts)")
         except Exception as exc:
             last_exc = exc
             logger.warning(f"⚠️ Bunq endpoint {name} failed: {exc}")
+
+    if merged_accounts:
+        return merged_accounts
 
     raise RuntimeError(f"bunq-sdk monetary account list failed: {last_exc}")
 
@@ -725,7 +748,7 @@ def classify_account_type(account):
     subtype = (get_obj_field(account, 'sub_type', 'type_', 'type', default='') or '').lower()
     fingerprint = f"{class_name} {description} {subtype}"
 
-    if any(token in fingerprint for token in ('savings', 'spaar')):
+    if any(token in fingerprint for token in ('savings', 'spaar', 'reserve', 'buffer', 'vakantie', 'doel', 'goal')):
         return 'savings'
     if any(token in fingerprint for token in ('investment', 'stock', 'share', 'crypto', 'belegging')):
         return 'investment'

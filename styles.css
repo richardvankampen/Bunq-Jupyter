@@ -88,6 +88,33 @@ body {
     position: relative;
 }
 
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -2;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    background:
+        radial-gradient(circle at 20% 20%, rgba(56, 189, 248, 0.16), transparent 42%),
+        radial-gradient(circle at 80% 70%, rgba(139, 92, 246, 0.16), transparent 48%);
+}
+
+body.effects-enhanced::before {
+    opacity: 1;
+    animation: ambientDrift 16s ease-in-out infinite alternate;
+}
+
+body.effects-minimal::before {
+    opacity: 0;
+}
+
+@keyframes ambientDrift {
+    0% { transform: translate3d(0, 0, 0) scale(1); }
+    100% { transform: translate3d(-2%, 1%, 0) scale(1.04); }
+}
+
 /* Particles Background */
 #particles-js {
     position: fixed;
@@ -125,6 +152,17 @@ body.reduce-animations *::after {
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--glass-border);
     box-shadow: 0 8px 32px var(--glass-shadow);
+}
+
+body.effects-enhanced .glass-effect {
+    box-shadow: 0 12px 40px rgba(15, 23, 42, 0.45);
+}
+
+body.effects-minimal .glass-effect {
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    box-shadow: 0 2px 12px rgba(15, 23, 42, 0.2);
+    border-color: rgba(148, 163, 184, 0.2);
 }
 
 /* ============================================
@@ -474,6 +512,10 @@ body.reduce-animations .play-btn:hover {
     cursor: pointer;
 }
 
+.clickable-kpi-detail {
+    cursor: pointer;
+}
+
 .kpi-icon {
     width: 50px;
     height: 50px;
@@ -554,6 +596,10 @@ body.reduce-animations .play-btn:hover {
 .kpi-sparkline {
     margin-top: var(--spacing-md);
     height: 40px;
+}
+
+.kpi-metric-chart {
+    height: 110px;
 }
 
 /* Progress Ring for Savings Rate */
@@ -869,6 +915,8 @@ body.reduce-animations .play-btn:hover {
     z-index: 1000;
     align-items: center;
     justify-content: center;
+    padding: 16px;
+    overflow-y: auto;
 }
 
 .modal.active {
@@ -881,6 +929,10 @@ body.reduce-animations .play-btn:hover {
     max-width: 600px;
     border-radius: var(--radius-lg);
     animation: slideUp 0.4s ease;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 32px);
+    overflow: hidden;
 }
 
 .login-modal-content {
@@ -898,6 +950,7 @@ body.reduce-animations .play-btn:hover {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-shrink: 0;
 }
 
 .modal-header h2 {
@@ -926,6 +979,8 @@ body.reduce-animations .play-btn:hover {
 
 .modal-body {
     padding: var(--spacing-lg);
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .login-form {
@@ -1051,6 +1106,7 @@ body.reduce-animations .play-btn:hover {
 .modal-footer {
     padding: var(--spacing-lg);
     border-top: 1px solid var(--glass-border);
+    flex-shrink: 0;
 }
 
 .balance-detail-summary {

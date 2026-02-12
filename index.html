@@ -130,7 +130,7 @@
                             <span id="checkingTrend">0%</span>
                         </div>
                     </div>
-                    <div class="kpi-sparkline">
+                    <div class="kpi-sparkline kpi-metric-chart">
                         <canvas id="checkingSparkline"></canvas>
                     </div>
                 </div>
@@ -148,13 +148,13 @@
                             <span id="savingsBalanceTrend">0%</span>
                         </div>
                     </div>
-                    <div class="kpi-sparkline">
+                    <div class="kpi-sparkline kpi-metric-chart">
                         <canvas id="savingsBalanceSparkline"></canvas>
                     </div>
                 </div>
 
                 <!-- Total Income Card -->
-                <div class="kpi-card glass-effect income-card" data-aos="fade-up" data-aos-delay="200">
+                <div class="kpi-card glass-effect income-card clickable-kpi-detail" data-kpi-detail="income" data-aos="fade-up" data-aos-delay="200">
                     <div class="kpi-icon">
                         <i class="fas fa-arrow-trend-up"></i>
                     </div>
@@ -172,7 +172,7 @@
                 </div>
                 
                 <!-- Total Expenses Card -->
-                <div class="kpi-card glass-effect expense-card" data-aos="fade-up" data-aos-delay="300">
+                <div class="kpi-card glass-effect expense-card clickable-kpi-detail" data-kpi-detail="expenses" data-aos="fade-up" data-aos-delay="300">
                     <div class="kpi-icon">
                         <i class="fas fa-arrow-trend-down"></i>
                     </div>
@@ -190,7 +190,7 @@
                 </div>
                 
                 <!-- Net Savings Card -->
-                <div class="kpi-card glass-effect savings-card" data-aos="fade-up" data-aos-delay="400">
+                <div class="kpi-card glass-effect savings-card clickable-kpi-detail" data-kpi-detail="savings-transfers" data-aos="fade-up" data-aos-delay="400">
                     <div class="kpi-icon">
                         <i class="fas fa-piggy-bank"></i>
                     </div>
@@ -253,10 +253,13 @@
             <!-- Row 2: Medium Charts -->
             <div class="viz-row two-col">
                 <!-- Sankey Diagram -->
-                <div class="viz-card glass-effect" data-aos="fade-up" data-aos-delay="100">
+                <div id="moneyFlowCard" class="viz-card glass-effect" data-aos="fade-up" data-aos-delay="100">
                     <div class="card-header">
                         <h3><i class="fas fa-project-diagram"></i> Money Flow (Sankey)</h3>
                         <div class="card-actions">
+                            <button class="action-btn" title="Detail" data-viz-detail="money-flow">
+                                <i class="fas fa-up-right-from-square"></i>
+                            </button>
                             <button class="action-btn" title="Fullscreen">
                                 <i class="fas fa-expand"></i>
                             </button>
