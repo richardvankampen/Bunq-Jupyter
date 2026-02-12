@@ -41,6 +41,7 @@ Meer details: [SECURITY.md](SECURITY.md)
 1. Installeer **Container Manager** (Package Center)
 2. Zorg voor **VPN-only toegang** (geen publieke exposure)
 3. Volg de volledige installatieguide: [SYNOLOGY_INSTALL.md](SYNOLOGY_INSTALL.md)
+4. Bij nieuwe Bunq API key of IP-wijziging: run `scripts/register_bunq_ip.sh`
 
 ---
 

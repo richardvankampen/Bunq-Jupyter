@@ -84,8 +84,7 @@ sudo chmod -R 755 /volume1/docker/bunq-dashboard
 # Recreate containers
 docker stack rm bunq
 # Redeploy (reload .env)
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 ```
 
 #### D. Syntax Error in Code
@@ -120,8 +119,7 @@ docker service logs bunq_bunq-dashboard
 docker service update --force bunq_bunq-dashboard
 
 # If service doesn't exist, redeploy:
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 ```
 
 #### B. Firewall Blocking
@@ -180,8 +178,7 @@ sudo docker secret rm bunq_basic_auth_password
 printf "NewStrongPassword" | sudo docker secret create bunq_basic_auth_password -
 
 # Redeploy (reload .env)
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 ```
 
 #### B. Session Expired
@@ -205,8 +202,7 @@ docker secret ls | grep bunq_flask_secret_key
 python3 -c "import secrets; print(secrets.token_hex(32))" | sudo docker secret create bunq_flask_secret_key -
 
 # Redeploy (reload .env)
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 
 # ⚠️ WARNING: Changing secret key invalidates all sessions!
 ```
@@ -265,8 +261,7 @@ ALLOWED_ORIGINS=http://192.168.1.100:5000
 ALLOWED_ORIGINS=http://192.168.1.100:5000,http://10.8.0.5:5000
 
 # After changing (reload .env):
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 ```
 
 #### B. Using Wrong Port
@@ -335,7 +330,7 @@ docker secret ls | grep bunq_vaultwarden_client
    - `printf "user.xxxx-xxxx-xxxx-xxxx" | sudo docker secret create bunq_vaultwarden_client_id -`
    - `sudo docker secret rm bunq_vaultwarden_client_secret`
    - `printf "your_client_secret" | sudo docker secret create bunq_vaultwarden_client_secret -`
-6. Redeploy: `set -a; source .env; set +a; sudo -E docker stack deploy -c docker-compose.yml bunq`
+6. Redeploy: `sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'`
 ```
 
 #### C. Network Issues Between Containers
@@ -354,8 +349,7 @@ sudo docker network create --driver overlay --attachable bunq-net
 sudo docker network connect bunq-net vaultwarden
 
 # Redeploy (reload .env):
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 ```
 
 #### D. Item Name Mismatch
@@ -421,18 +415,32 @@ docker secret ls | grep bunq_vaultwarden_client
 # If not set, follow Vaultwarden setup in SYNOLOGY_INSTALL.md
 ```
 
-#### C. Bunq API Key Invalid
+#### C. Bunq API Key / IP Whitelist Mismatch
 ```bash
-# Check logs:
-docker service logs bunq_bunq-dashboard | grep -i "api key"
+# Detect the exact Bunq auth error:
+docker service logs bunq_bunq-dashboard | grep -E "Incorrect API key or IP address|response id"
 
-# Test API key manually:
-# In Bunq app:
-# Profile → Security → API Keys
-# Check if key is active and not revoked
+# Run automated fix (in repo):
+cd /volume1/docker/bunq-dashboard
+sh scripts/register_bunq_ip.sh
 
-# If invalid: Generate new key in Bunq app
-# Update in Vaultwarden → Restart dashboard
+# Script output shows the container egress public IP.
+# In Bunq app: Profile -> Security -> API Keys
+# Ensure API key is active and allowlist includes that IP.
+
+# If you rotated API key, update secret first:
+printf "Paste BUNQ API key: "
+stty -echo; IFS= read -r BUNQ_API_KEY; stty echo; echo
+CLEAN_KEY="$(printf '%s' "$BUNQ_API_KEY" | tr -d '\r\n')"
+sudo docker stack rm bunq
+sleep 15
+sudo docker secret rm bunq_api_key 2>/dev/null || true
+printf '%s' "$CLEAN_KEY" | sudo docker secret create bunq_api_key -
+unset BUNQ_API_KEY CLEAN_KEY
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
+
+# Re-run registration script after key update:
+sh scripts/register_bunq_ip.sh
 ```
 
 #### D. Wrong Bunq Environment
@@ -446,8 +454,7 @@ BUNQ_ENVIRONMENT=SANDBOX     # For testing
 # Sandbox key doesn't work with PRODUCTION and vice versa
 
 # After changing (reload .env):
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 ```
 
 ---
@@ -532,8 +539,7 @@ SESSION_COOKIE_SECURE=true   # For HTTPS
 # If accessing via https://, set to true
 
 # After changing (reload .env):
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 ```
 
 ---
@@ -563,8 +569,7 @@ services:
           memory: 2048M    # Increase from 1024M
 
 # Restart:
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 ```
 
 #### B. Bunq API Slow
@@ -638,17 +643,14 @@ docker service logs bunq_bunq-dashboard | grep transaction
 ls -la /volume1/docker/bunq-dashboard/.env
 
 # Ensure .env is loaded into the shell before deploy:
-set -a; source .env; set +a
-# If using sudo, preserve env:
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 
 # Test variable loading:
 docker exec "$BUNQ_CONTAINER" env | grep BUNQ
 
 # Rebuild if needed:
 docker stack rm bunq
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 ```
 
 ---
@@ -684,8 +686,7 @@ FLASK_DEBUG=true
 LOG_LEVEL=DEBUG
 
 # Restart (reload .env):
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 
 # Watch logs:
 docker service logs -f bunq_bunq-dashboard

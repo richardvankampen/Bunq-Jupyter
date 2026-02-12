@@ -508,11 +508,8 @@ sudo docker build -t bunq-dashboard:local .
 `WARNING: Running pip as the 'root' user ...` of een melding over een nieuwe pip‑versie.  
 Dit is **normaal in Docker builds** en je hoeft hier niets mee te doen.
 
-# Load .env into shell (for variable substitution)
-set -a; source .env; set +a
-
-# Deploy stack (Swarm)
-sudo -E docker stack deploy -c docker-compose.yml bunq
+# Deploy stack (Swarm) with values from .env
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 
 # Check logs
 sudo docker service logs -f bunq_bunq-dashboard
@@ -532,6 +529,33 @@ Je zou moeten zien:
 Browser: `http://192.168.1.100:5000`
 
 🎉 **SUCCESS!** Je dashboard draait nu!
+
+### Stap 3.8: Bunq IP Whitelisting & Re-registratie (verplicht bij key/IP wijziging)
+
+Gebruik dit wanneer:
+- je een nieuwe Bunq API key hebt aangemaakt
+- je publieke IP is gewijzigd (bijv. VPN/ISP wijziging)
+- je logs tonen: `Incorrect API key or IP address`
+
+**Script uit de repo:**
+```bash
+cd /volume1/docker/bunq-dashboard
+sh scripts/register_bunq_ip.sh
+```
+
+Het script doet automatisch:
+- egress publieke IP tonen vanuit de container
+- auth-mode detectie (`USE_VAULTWARDEN=true/false`)
+- bij directe key-flow: `bunq_api_key` secret valideren (64 hex chars)
+- oude Bunq context verwijderen
+- bij directe key-flow: nieuwe `ApiContext` maken (installation + device registration)
+- service forceren te herstarten
+- relevante Bunq logs tonen
+
+**Als het script nog steeds `Incorrect API key or IP address` toont:**
+1. Open bunq app en controleer API key status/IP-restrictie.
+2. Whitelist het egress IP dat het script toont.
+3. Run het script opnieuw.
 
 ---
 
@@ -604,8 +628,7 @@ cd /volume1/docker/bunq-dashboard
 sudo docker build -t bunq-dashboard:local .
 
 # Redeploy stack
-set -a; source .env; set +a
-sudo -E docker stack deploy -c docker-compose.yml bunq
+sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'
 
 # Verify
 sudo docker stack ps bunq
@@ -634,8 +657,10 @@ sudo docker logs vaultwarden
 ### Rotate Bunq API Key
 
 1. Generate new key in Bunq app
-2. Update in Vaultwarden (web interface)
-3. Restart dashboard: `sudo docker service update --force bunq_bunq-dashboard`
+2. Update secret:
+   - bij Vaultwarden-flow: update key in Vaultwarden item
+   - bij directe key-flow (`USE_VAULTWARDEN=false`): update Docker secret `bunq_api_key`
+3. Run: `sh scripts/register_bunq_ip.sh`
 
 No code changes needed! ✨
 
@@ -645,8 +670,9 @@ No code changes needed! ✨
 
 - Logs: `sudo docker service logs -f bunq_bunq-dashboard` en `sudo docker logs vaultwarden`
 - Connectivity: `sudo docker exec $(sudo docker ps --filter name=bunq_bunq-dashboard -q | head -n1) ping vaultwarden`
-- Redeploy na .env wijziging: `set -a; source .env; set +a; sudo -E docker stack deploy -c docker-compose.yml bunq`
+- Redeploy na .env wijziging: `sudo sh -c 'set -a; . /volume1/docker/bunq-dashboard/.env; set +a; docker stack deploy -c /volume1/docker/bunq-dashboard/docker-compose.yml bunq'`
 - Alleen herstart (zonder config/secrets wijzigingen): `sudo docker service update --force bunq_bunq-dashboard`
+- Bunq IP/device opnieuw registreren: `sh scripts/register_bunq_ip.sh`
 
 Voor uitgebreide oplossingen, zie [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 

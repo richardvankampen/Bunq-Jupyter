@@ -238,6 +238,24 @@ LOG_LEVEL=INFO              # Or WARNING for production
 chmod 600 /volume1/docker/bunq-dashboard/.env
 ```
 
+### Bunq IP Whitelist (Critical)
+
+Bij Bunq API keys kan IP-restrictie actief zijn. Dan moet het publieke egress-IP van je container
+toegestaan zijn, anders krijg je:
+`Incorrect API key or IP address`.
+
+**Aanbevolen procedure na API key rotatie of netwerk/VPN wijziging:**
+```bash
+cd /volume1/docker/bunq-dashboard
+sh scripts/register_bunq_ip.sh
+```
+
+Dit script:
+- toont het actuele publieke egress-IP van de container
+- valideert `bunq_api_key` secret formaat
+- maakt een nieuwe Bunq `ApiContext` (installation + device registration)
+- herstart de service en toont relevante logs
+
 ---
 
 ## 🌐 Network Security
