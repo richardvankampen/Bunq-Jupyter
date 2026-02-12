@@ -11,6 +11,8 @@ Read-only dashboard dat data uit de Bunq API haalt en overzichtelijk visualiseer
 
 - Single-port dashboard (frontend + API) op poort 5000
 - Real-time data uit de Bunq API (read-only)
+- Lokale history-opslag (SQLite) voor langere-termijn inzichten
+- EUR-totalen voor niet-EUR rekeningen (met FX conversie en caching)
 - 11+ visualisaties (cashflow, trends, categorieën)
 - Caching en pagination voor performance
 - Synology‑ready deployment

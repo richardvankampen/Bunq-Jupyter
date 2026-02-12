@@ -312,6 +312,12 @@ Gebruik daarom **altijd dezelfde URL** (HTTP of HTTPS), anders werkt je sessie n
 | `DEFAULT_PAGE_SIZE` | Default pagination size | `500` |
 | `MAX_PAGE_SIZE` | Max pagination size | `2000` |
 | `MAX_DAYS` | Max dagen voor queries | `3650` |
+| `DATA_DB_ENABLED` | Lokale SQLite history storage aan/uit | `true` |
+| `DATA_DB_PATH` | Pad naar lokale SQLite DB | `config/dashboard_data.db` |
+| `FX_ENABLED` | Omgerekende EUR totalen voor niet-EUR rekeningen | `true` |
+| `FX_RATE_SOURCE` | Wisselkoersbron | `frankfurter` |
+| `FX_REQUEST_TIMEOUT_SECONDS` | Timeout FX API call | `8` |
+| `FX_CACHE_HOURS` | Hoe lang FX rates gecached worden | `24` |
 | `VAULTWARDEN_DEVICE_IDENTIFIER` | Device ID voor Vaultwarden OAuth | Automatisch gegenereerd |
 | `VAULTWARDEN_DEVICE_NAME` | Device naam voor Vaultwarden OAuth | `Bunq Dashboard` |
 | `VAULTWARDEN_DEVICE_TYPE` | Device type voor Vaultwarden OAuth | `22` |
@@ -331,6 +337,8 @@ SESSION_COOKIE_SECURE=false
 # of true bij HTTPS
 LOG_LEVEL=INFO
 FLASK_DEBUG=false
+DATA_DB_ENABLED=true
+FX_ENABLED=true
 ```
 
 **Tip:** Gebruik `http://vaultwarden:80` als Vaultwarden op hetzelfde `bunq-net` netwerk draait.
@@ -436,6 +444,12 @@ services:
       DEFAULT_PAGE_SIZE: "${DEFAULT_PAGE_SIZE:-500}"
       MAX_PAGE_SIZE: "${MAX_PAGE_SIZE:-2000}"
       MAX_DAYS: "${MAX_DAYS:-3650}"
+      DATA_DB_ENABLED: "${DATA_DB_ENABLED:-true}"
+      DATA_DB_PATH: "${DATA_DB_PATH:-config/dashboard_data.db}"
+      FX_ENABLED: "${FX_ENABLED:-true}"
+      FX_RATE_SOURCE: "${FX_RATE_SOURCE:-frankfurter}"
+      FX_REQUEST_TIMEOUT_SECONDS: "${FX_REQUEST_TIMEOUT_SECONDS:-8}"
+      FX_CACHE_HOURS: "${FX_CACHE_HOURS:-24}"
 
     secrets:
       - source: bunq_basic_auth_password

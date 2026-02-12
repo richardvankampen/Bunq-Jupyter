@@ -21,6 +21,7 @@ import requests
 import logging
 import hashlib
 import time
+import sqlite3
 import secrets
 import uuid
 import importlib
@@ -59,6 +60,7 @@ def get_int_env(name, default):
 _MONETARY_ACCOUNT_ENDPOINT = None
 _PAYMENT_ENDPOINT = None
 _PAYMENT_LIST_MODE = None
+_FX_RUNTIME_CACHE = {}
 
 def get_obj_field(obj, *field_names, default=None):
     """Read first non-empty field from objects or dictionaries."""
@@ -422,6 +424,111 @@ DEFAULT_PAGE_SIZE = get_int_env('DEFAULT_PAGE_SIZE', 500)
 MAX_PAGE_SIZE = get_int_env('MAX_PAGE_SIZE', 2000)
 MAX_DAYS = get_int_env('MAX_DAYS', 3650)
 
+# Local data store for historical analytics (P1)
+DATA_DB_ENABLED = os.getenv('DATA_DB_ENABLED', 'true').lower() == 'true'
+DATA_DB_PATH = os.getenv('DATA_DB_PATH', os.path.join('config', 'dashboard_data.db'))
+FX_ENABLED = os.getenv('FX_ENABLED', 'true').lower() == 'true'
+FX_RATE_SOURCE = os.getenv('FX_RATE_SOURCE', 'frankfurter').strip().lower()
+FX_REQUEST_TIMEOUT_SECONDS = get_int_env('FX_REQUEST_TIMEOUT_SECONDS', 8)
+FX_CACHE_HOURS = get_int_env('FX_CACHE_HOURS', 24)
+
+def get_data_db_connection():
+    if not DATA_DB_ENABLED:
+        return None
+    os.makedirs(os.path.dirname(DATA_DB_PATH), exist_ok=True)
+    connection = sqlite3.connect(DATA_DB_PATH, timeout=10)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+def init_data_store():
+    if not DATA_DB_ENABLED:
+        logger.info("📦 Historical data store disabled (DATA_DB_ENABLED=false)")
+        return
+
+    connection = get_data_db_connection()
+    if connection is None:
+        return
+
+    try:
+        with connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
+
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS account_snapshots (
+                    snapshot_date TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    description TEXT,
+                    account_type TEXT,
+                    account_class TEXT,
+                    status TEXT,
+                    balance_value REAL NOT NULL,
+                    balance_currency TEXT NOT NULL,
+                    balance_eur_value REAL,
+                    fx_rate_to_eur REAL,
+                    captured_at TEXT NOT NULL,
+                    PRIMARY KEY (snapshot_date, account_id)
+                )
+            """)
+
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS transaction_cache (
+                    tx_key TEXT PRIMARY KEY,
+                    tx_id TEXT,
+                    account_id TEXT NOT NULL,
+                    account_name TEXT,
+                    tx_date TEXT NOT NULL,
+                    amount REAL NOT NULL,
+                    currency TEXT,
+                    amount_eur REAL,
+                    description TEXT,
+                    counterparty TEXT,
+                    merchant TEXT,
+                    category TEXT,
+                    tx_type TEXT,
+                    is_internal_transfer INTEGER NOT NULL DEFAULT 0,
+                    captured_at TEXT NOT NULL
+                )
+            """)
+
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS fx_rates (
+                    base_currency TEXT NOT NULL,
+                    quote_currency TEXT NOT NULL,
+                    rate_date TEXT NOT NULL,
+                    rate REAL NOT NULL,
+                    source TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY (base_currency, quote_currency, rate_date)
+                )
+            """)
+
+            connection.execute("""
+                CREATE INDEX IF NOT EXISTS idx_account_snapshots_date
+                ON account_snapshots(snapshot_date)
+            """)
+
+            connection.execute("""
+                CREATE INDEX IF NOT EXISTS idx_transaction_cache_date
+                ON transaction_cache(tx_date)
+            """)
+
+            connection.execute("""
+                CREATE INDEX IF NOT EXISTS idx_transaction_cache_account
+                ON transaction_cache(account_id)
+            """)
+
+            connection.execute("""
+                CREATE INDEX IF NOT EXISTS idx_fx_rates_date
+                ON fx_rates(rate_date)
+            """)
+
+        logger.info(f"📦 Historical data store initialized at {DATA_DB_PATH}")
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed to initialize historical data store: {exc}")
+    finally:
+        connection.close()
+
 cache = Cache(app, config={
     'CACHE_TYPE': 'SimpleCache',
     'CACHE_DEFAULT_TIMEOUT': CACHE_TTL_SECONDS
@@ -451,6 +558,9 @@ CORS(app,
      supports_credentials=True,  # CRITICAL: Allow cookies
      allow_headers=['Content-Type', 'Authorization'],
      expose_headers=['Content-Type'])
+
+# Initialize optional local data store (non-fatal on failure).
+init_data_store()
 
 # ============================================
 # SECURITY: SESSION-BASED AUTHENTICATION
@@ -754,6 +864,257 @@ def classify_account_type(account):
         return 'investment'
     return 'checking'
 
+def get_cached_fx_rate(base_currency, quote_currency='EUR', rate_date=None):
+    if not DATA_DB_ENABLED:
+        return None
+    date_key = rate_date or datetime.now(timezone.utc).date().isoformat()
+    connection = get_data_db_connection()
+    if connection is None:
+        return None
+    try:
+        row = connection.execute(
+            """
+            SELECT rate, fetched_at
+            FROM fx_rates
+            WHERE base_currency = ? AND quote_currency = ? AND rate_date = ?
+            """,
+            (base_currency.upper(), quote_currency.upper(), date_key),
+        ).fetchone()
+        if not row:
+            return None
+        fetched_at = parse_bunq_datetime(row['fetched_at'], context='fx_rates.fetched_at')
+        if fetched_at is None:
+            return float(row['rate'])
+        age = datetime.now(timezone.utc) - fetched_at
+        if age.total_seconds() > FX_CACHE_HOURS * 3600:
+            return None
+        return float(row['rate'])
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed reading cached FX rate {base_currency}->{quote_currency}: {exc}")
+        return None
+    finally:
+        connection.close()
+
+def cache_fx_rate(base_currency, quote_currency, rate, rate_date=None, source='unknown'):
+    if not DATA_DB_ENABLED:
+        return
+    date_key = rate_date or datetime.now(timezone.utc).date().isoformat()
+    connection = get_data_db_connection()
+    if connection is None:
+        return
+    try:
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO fx_rates (
+                    base_currency, quote_currency, rate_date, rate, source, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(base_currency, quote_currency, rate_date) DO UPDATE SET
+                    rate = excluded.rate,
+                    source = excluded.source,
+                    fetched_at = excluded.fetched_at
+                """,
+                (
+                    base_currency.upper(),
+                    quote_currency.upper(),
+                    date_key,
+                    float(rate),
+                    source,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed caching FX rate {base_currency}->{quote_currency}: {exc}")
+    finally:
+        connection.close()
+
+def fetch_fx_rate(base_currency, quote_currency='EUR', rate_date=None):
+    if base_currency.upper() == quote_currency.upper():
+        return 1.0
+    if not FX_ENABLED:
+        return None
+
+    base = base_currency.upper()
+    quote = quote_currency.upper()
+    date_key = rate_date or datetime.now(timezone.utc).date().isoformat()
+    runtime_key = (base, quote, date_key)
+
+    runtime_entry = _FX_RUNTIME_CACHE.get(runtime_key)
+    if runtime_entry:
+        cached_rate, cached_at_epoch = runtime_entry
+        if (time.time() - cached_at_epoch) <= (FX_CACHE_HOURS * 3600):
+            return cached_rate
+
+    # Try cache first.
+    cached = get_cached_fx_rate(base, quote, rate_date=date_key)
+    if cached is not None:
+        _FX_RUNTIME_CACHE[runtime_key] = (cached, time.time())
+        return cached
+
+    try:
+        # Frankfurter API (ECB-backed) supports latest and historical dates.
+        if FX_RATE_SOURCE == 'frankfurter':
+            endpoint_path = date_key if rate_date else 'latest'
+            response = requests.get(
+                f"https://api.frankfurter.app/{endpoint_path}",
+                params={'from': base, 'to': quote},
+                timeout=FX_REQUEST_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            rates = payload.get('rates', {})
+            rate = rates.get(quote)
+            if rate is None:
+                return None
+            cache_fx_rate(base, quote, float(rate), rate_date=date_key, source='frankfurter')
+            _FX_RUNTIME_CACHE[runtime_key] = (float(rate), time.time())
+            return float(rate)
+    except Exception as exc:
+        logger.warning(f"⚠️ FX lookup failed for {base}->{quote}: {exc}")
+
+    return None
+
+def convert_amount_to_eur(amount, currency, rate_date=None):
+    if amount is None:
+        return None, None, False
+    if not currency:
+        return float(amount), 1.0, True
+
+    currency_upper = str(currency).upper()
+    numeric_amount = float(amount)
+    if currency_upper == 'EUR':
+        return numeric_amount, 1.0, True
+
+    rate = fetch_fx_rate(currency_upper, 'EUR', rate_date=rate_date)
+    if rate is None:
+        return None, None, False
+    return numeric_amount * rate, rate, True
+
+def persist_account_snapshots(accounts_data):
+    if not DATA_DB_ENABLED or not accounts_data:
+        return
+
+    snapshot_date = datetime.now(timezone.utc).date().isoformat()
+    captured_at = datetime.now(timezone.utc).isoformat()
+    connection = get_data_db_connection()
+    if connection is None:
+        return
+
+    try:
+        with connection:
+            for account in accounts_data:
+                account_id = str(account.get('id'))
+                balance = account.get('balance', {})
+                balance_eur = account.get('balance_eur', {})
+                connection.execute(
+                    """
+                    INSERT INTO account_snapshots (
+                        snapshot_date, account_id, description, account_type, account_class, status,
+                        balance_value, balance_currency, balance_eur_value, fx_rate_to_eur, captured_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(snapshot_date, account_id) DO UPDATE SET
+                        description = excluded.description,
+                        account_type = excluded.account_type,
+                        account_class = excluded.account_class,
+                        status = excluded.status,
+                        balance_value = excluded.balance_value,
+                        balance_currency = excluded.balance_currency,
+                        balance_eur_value = excluded.balance_eur_value,
+                        fx_rate_to_eur = excluded.fx_rate_to_eur,
+                        captured_at = excluded.captured_at
+                    """,
+                    (
+                        snapshot_date,
+                        account_id,
+                        account.get('description'),
+                        account.get('account_type'),
+                        account.get('account_class'),
+                        account.get('status'),
+                        safe_float(balance.get('value'), default=0.0, context=f"account {account_id} snapshot balance"),
+                        balance.get('currency') or 'EUR',
+                        (
+                            None if balance_eur.get('value') is None else
+                            safe_float(balance_eur.get('value'), default=0.0, context=f"account {account_id} snapshot balance_eur")
+                        ),
+                        account.get('fx_rate_to_eur'),
+                        captured_at,
+                    ),
+                )
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed persisting account snapshots: {exc}")
+    finally:
+        connection.close()
+
+def build_transaction_cache_key(transaction):
+    payload = "|".join([
+        str(transaction.get('id')),
+        str(transaction.get('account_id')),
+        str(transaction.get('date')),
+        str(transaction.get('amount')),
+        str(transaction.get('description')),
+    ])
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+def persist_transactions(transactions):
+    if not DATA_DB_ENABLED or not transactions:
+        return
+
+    connection = get_data_db_connection()
+    if connection is None:
+        return
+    captured_at = datetime.now(timezone.utc).isoformat()
+
+    try:
+        with connection:
+            for transaction in transactions:
+                tx_key = build_transaction_cache_key(transaction)
+                amount = safe_float(transaction.get('amount'), default=0.0, context='transaction amount')
+                currency = (transaction.get('currency') or 'EUR').upper()
+                tx_date = parse_bunq_datetime(transaction.get('date'), context='transaction date')
+                rate_date = tx_date.date().isoformat() if tx_date else None
+                amount_eur, _, _ = convert_amount_to_eur(amount, currency, rate_date=rate_date)
+                connection.execute(
+                    """
+                    INSERT INTO transaction_cache (
+                        tx_key, tx_id, account_id, account_name, tx_date, amount, currency, amount_eur,
+                        description, counterparty, merchant, category, tx_type, is_internal_transfer, captured_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(tx_key) DO UPDATE SET
+                        account_name = excluded.account_name,
+                        amount = excluded.amount,
+                        currency = excluded.currency,
+                        amount_eur = excluded.amount_eur,
+                        description = excluded.description,
+                        counterparty = excluded.counterparty,
+                        merchant = excluded.merchant,
+                        category = excluded.category,
+                        tx_type = excluded.tx_type,
+                        is_internal_transfer = excluded.is_internal_transfer,
+                        captured_at = excluded.captured_at
+                    """,
+                    (
+                        tx_key,
+                        transaction.get('id'),
+                        str(transaction.get('account_id')),
+                        transaction.get('account_name'),
+                        transaction.get('date'),
+                        amount,
+                        currency,
+                        amount_eur,
+                        transaction.get('description'),
+                        transaction.get('counterparty'),
+                        transaction.get('merchant'),
+                        transaction.get('category'),
+                        transaction.get('type'),
+                        1 if transaction.get('is_internal_transfer') else 0,
+                        captured_at,
+                    ),
+                )
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed persisting transactions: {exc}")
+    finally:
+        connection.close()
+
 # ============================================
 # AUTHENTICATION ENDPOINTS
 # ============================================
@@ -1028,7 +1389,9 @@ def health_check():
             'rate_limiting': True,
             'https_only': app.config['SESSION_COOKIE_SECURE']
         },
-        'auth_configured': has_config('BASIC_AUTH_PASSWORD', 'basic_auth_password')
+        'auth_configured': has_config('BASIC_AUTH_PASSWORD', 'basic_auth_password'),
+        'history_store_enabled': DATA_DB_ENABLED,
+        'fx_enabled': FX_ENABLED
     })
 
 @app.route('/api/accounts', methods=['GET'])
@@ -1060,6 +1423,10 @@ def get_accounts():
                 context=f"account {account_id} balance"
             )
             account_type = classify_account_type(account)
+            balance_eur_value, fx_rate_to_eur, fx_converted = convert_amount_to_eur(
+                balance_value,
+                balance_currency,
+            )
             accounts_data.append({
                 'id': account_id,
                 'description': get_obj_field(account, 'description', 'display_name') or f"Account {account_id}",
@@ -1067,12 +1434,19 @@ def get_accounts():
                     'value': balance_value,
                     'currency': balance_currency
                 },
+                'balance_eur': {
+                    'value': balance_eur_value,
+                    'currency': 'EUR'
+                },
+                'fx_rate_to_eur': fx_rate_to_eur,
+                'fx_converted': fx_converted,
                 'status': get_obj_field(account, 'status', 'status_') or 'UNKNOWN',
                 'account_type': account_type,
                 'account_class': account.__class__.__name__
             })
         
         logger.info(f"✅ Retrieved {len(accounts_data)} accounts")
+        persist_account_snapshots(accounts_data)
         response = {
             'success': True,
             'data': accounts_data,
@@ -1152,7 +1526,8 @@ def get_transactions():
         
         if exclude_internal:
             all_transactions = [t for t in all_transactions if not t.get('is_internal_transfer')]
-        
+
+        persist_transactions(all_transactions)
         all_transactions.sort(key=lambda t: t['date'], reverse=sort_desc)
         total_count = len(all_transactions)
         paged = all_transactions[offset:offset + limit]
@@ -1340,6 +1715,142 @@ def get_statistics():
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/api/history/balances', methods=['GET'])
+@requires_auth
+@rate_limit('general')
+def get_balance_history():
+    """Return historical balance series from local data store."""
+    if not DATA_DB_ENABLED:
+        return jsonify({
+            'success': False,
+            'error': 'Historical data store disabled'
+        }), 503
+
+    days = clamp_days(request.args.get('days', 90))
+    start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+    connection = get_data_db_connection()
+    if connection is None:
+        return jsonify({
+            'success': False,
+            'error': 'Unable to open historical data store'
+        }), 500
+
+    try:
+        rows = connection.execute(
+            """
+            SELECT snapshot_date, account_type,
+                   SUM(
+                       CASE
+                           WHEN balance_eur_value IS NOT NULL THEN balance_eur_value
+                           WHEN balance_currency = 'EUR' THEN balance_value
+                           ELSE 0
+                       END
+                   ) AS total_eur
+            FROM account_snapshots
+            WHERE snapshot_date >= ?
+            GROUP BY snapshot_date, account_type
+            ORDER BY snapshot_date ASC
+            """,
+            (start_date,),
+        ).fetchall()
+
+        latest_row = connection.execute(
+            "SELECT MAX(snapshot_date) AS latest_date FROM account_snapshots"
+        ).fetchone()
+        latest_date = latest_row['latest_date'] if latest_row else None
+
+        breakdown = {'checking': [], 'savings': [], 'investment': []}
+        if latest_date:
+            breakdown_rows = connection.execute(
+                """
+                SELECT account_id, description, account_type, account_class, status,
+                       balance_value, balance_currency, balance_eur_value, fx_rate_to_eur
+                FROM account_snapshots
+                WHERE snapshot_date = ?
+                ORDER BY account_type, description
+                """,
+                (latest_date,),
+            ).fetchall()
+            for row in breakdown_rows:
+                account_type = row['account_type'] or 'checking'
+                if account_type not in breakdown:
+                    breakdown[account_type] = []
+                breakdown[account_type].append({
+                    'id': row['account_id'],
+                    'description': row['description'],
+                    'account_type': account_type,
+                    'account_class': row['account_class'],
+                    'status': row['status'],
+                    'balance': {
+                        'value': float(row['balance_value']),
+                        'currency': row['balance_currency'],
+                    },
+                    'balance_eur': {
+                        'value': (
+                            None if row['balance_eur_value'] is None
+                            else float(row['balance_eur_value'])
+                        ),
+                        'currency': 'EUR',
+                    },
+                    'fx_rate_to_eur': row['fx_rate_to_eur'],
+                })
+
+        series_map = defaultdict(lambda: {'checking': 0.0, 'savings': 0.0, 'investment': 0.0})
+        for row in rows:
+            account_type = row['account_type'] or 'checking'
+            if account_type not in ('checking', 'savings', 'investment'):
+                account_type = 'checking'
+            series_map[row['snapshot_date']][account_type] = float(row['total_eur'] or 0.0)
+
+        dates = sorted(series_map.keys())
+        series = {
+            account_type: [
+                {'date': date_key, 'total': series_map[date_key].get(account_type, 0.0)}
+                for date_key in dates
+            ]
+            for account_type in ('checking', 'savings', 'investment')
+        }
+
+        latest_totals = {key: 0.0 for key in ('checking', 'savings', 'investment')}
+        if dates:
+            latest_totals = series_map[dates[-1]]
+
+        missing_fx_count = 0
+        if latest_date:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS missing_fx
+                FROM account_snapshots
+                WHERE snapshot_date = ?
+                  AND balance_currency != 'EUR'
+                  AND balance_eur_value IS NULL
+                """,
+                (latest_date,),
+            ).fetchone()
+            missing_fx_count = int(row['missing_fx']) if row else 0
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'days': days,
+                'start_date': start_date,
+                'latest_snapshot_date': latest_date,
+                'series': series,
+                'latest_totals': latest_totals,
+                'account_breakdown': breakdown,
+                'missing_fx_count': missing_fx_count,
+            }
+        })
+
+    except Exception as exc:
+        logger.exception(f"❌ Error fetching balance history: {exc}")
+        return jsonify({
+            'success': False,
+            'error': str(exc)
+        }), 500
+    finally:
+        connection.close()
 
 @app.route('/api/demo-data', methods=['GET'])
 def get_demo_data():

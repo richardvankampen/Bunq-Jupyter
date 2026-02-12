@@ -23,6 +23,7 @@ let isLoading = false;
 let isAuthenticated = false;
 let accountsList = [];
 let balanceMetrics = null;
+let balanceHistoryData = null;
 let selectedAccountIds = new Set();
 const chartRegistry = {
     chartjs: {},
@@ -246,6 +247,7 @@ function updateAuthUI(authenticated, username = '') {
 async function loadAccounts() {
     if (!isAuthenticated) {
         accountsList = [];
+        balanceHistoryData = null;
         renderAccountsFilter([]);
         return;
     }
@@ -254,10 +256,39 @@ async function loadAccounts() {
     if (response && response.success) {
         accountsList = response.data || [];
         renderAccountsFilter(accountsList);
+        await loadBalanceHistory(CONFIG.timeRange);
     } else {
         accountsList = [];
+        balanceHistoryData = null;
         renderAccountsFilter([]);
     }
+}
+
+async function loadBalanceHistory(days = CONFIG.timeRange) {
+    if (!isAuthenticated) {
+        balanceHistoryData = null;
+        return null;
+    }
+
+    try {
+        const response = await fetch(`${CONFIG.apiEndpoint}/history/balances?days=${days}`, {
+            credentials: 'include'
+        });
+        if (!response.ok) {
+            balanceHistoryData = null;
+            return null;
+        }
+        const payload = await response.json();
+        if (payload && payload.success && payload.data) {
+            balanceHistoryData = payload.data;
+            return balanceHistoryData;
+        }
+    } catch (error) {
+        console.warn('Unable to load balance history:', error);
+    }
+
+    balanceHistoryData = null;
+    return null;
 }
 
 function persistSelectedAccounts() {
@@ -681,6 +712,7 @@ async function loadRealData() {
     
     try {
         console.log('📡 Fetching real data from Bunq API...');
+        await loadAccounts();
         
         const pageSize = 500;
         const maxPages = 20;
@@ -816,7 +848,7 @@ function collectDateRangeKeys(transactions) {
     return Array.from(keys).sort();
 }
 
-function calculateBalanceMetrics(transactions, accounts) {
+function calculateBalanceMetrics(transactions, accounts, historyData = null) {
     const validAccounts = (accounts || [])
         .filter((acc) => acc && acc.balance && typeof acc.balance.value !== 'undefined')
         .map((acc) => ({
@@ -824,56 +856,110 @@ function calculateBalanceMetrics(transactions, accounts) {
             id: String(acc.id),
             account_type: classifyAccountType(acc),
             balanceValue: Number(acc.balance.value) || 0,
-            balanceCurrency: String(acc.balance.currency || 'EUR').toUpperCase()
+            balanceCurrency: String(acc.balance.currency || 'EUR').toUpperCase(),
+            balanceEurValue: Number.isFinite(Number(acc?.balance_eur?.value))
+                ? Number(acc.balance_eur.value)
+                : (
+                    String(acc?.balance?.currency || 'EUR').toUpperCase() === 'EUR'
+                        ? (Number(acc.balance.value) || 0)
+                        : null
+                )
         }));
 
     if (!validAccounts.length) {
         return null;
     }
 
-    const accountsById = new Map(validAccounts.map((acc) => [String(acc.id), acc]));
     const grouped = { checking: [], savings: [], investment: [] };
     const totals = { checking: 0, savings: 0, investment: 0 };
-    let nonEurCount = 0;
+    let missingFxCount = 0;
 
     validAccounts.forEach((acc) => {
-        if (acc.balanceCurrency !== 'EUR') {
-            nonEurCount += 1;
-            return;
-        }
         grouped[acc.account_type] = grouped[acc.account_type] || [];
         grouped[acc.account_type].push(acc);
-        totals[acc.account_type] = (totals[acc.account_type] || 0) + acc.balanceValue;
-    });
-
-    const dateKeys = collectDateRangeKeys(transactions);
-    const dailyDelta = {};
-    transactions.forEach((tx) => {
-        const account = accountsById.get(String(tx.account_id));
-        if (!account || account.balanceCurrency !== 'EUR') return;
-        const key = toDateKey(tx.date);
-        if (!dailyDelta[key]) {
-            dailyDelta[key] = { checking: 0, savings: 0, investment: 0 };
+        if (acc.balanceEurValue === null) {
+            missingFxCount += 1;
+            return;
         }
-        dailyDelta[key][account.account_type] = (dailyDelta[key][account.account_type] || 0) + (Number(tx.amount) || 0);
+        totals[acc.account_type] = (totals[acc.account_type] || 0) + acc.balanceEurValue;
     });
 
     const series = { checking: [], savings: [], investment: [] };
-    const running = { ...totals };
 
-    for (let i = dateKeys.length - 1; i >= 0; i -= 1) {
-        const key = dateKeys[i];
-        const pointDate = new Date(`${key}T00:00:00`);
-
-        ['checking', 'savings', 'investment'].forEach((type) => {
-            series[type].unshift({ date: pointDate, total: running[type] || 0 });
+    if (historyData?.series) {
+        ['checking', 'savings', 'investment'].forEach((accountType) => {
+            const sourceSeries = Array.isArray(historyData.series[accountType])
+                ? historyData.series[accountType]
+                : [];
+            series[accountType] = sourceSeries.map((point) => ({
+                date: new Date(`${point.date}T00:00:00`),
+                total: Number(point.total) || 0
+            }));
         });
 
-        const delta = dailyDelta[key];
-        if (delta) {
-            ['checking', 'savings', 'investment'].forEach((type) => {
-                running[type] = (running[type] || 0) - (delta[type] || 0);
+        if (historyData.latest_totals) {
+            ['checking', 'savings', 'investment'].forEach((accountType) => {
+                const value = Number(historyData.latest_totals[accountType]);
+                if (Number.isFinite(value)) {
+                    totals[accountType] = value;
+                }
             });
+        }
+
+        if (historyData.account_breakdown) {
+            ['checking', 'savings', 'investment'].forEach((accountType) => {
+                const rows = Array.isArray(historyData.account_breakdown[accountType])
+                    ? historyData.account_breakdown[accountType]
+                    : [];
+                grouped[accountType] = rows.map((row) => ({
+                    ...row,
+                    id: String(row.id),
+                    account_type: classifyAccountType(row),
+                    balanceValue: Number(row?.balance?.value) || 0,
+                    balanceCurrency: String(row?.balance?.currency || 'EUR').toUpperCase(),
+                    balanceEurValue: Number.isFinite(Number(row?.balance_eur?.value))
+                        ? Number(row.balance_eur.value)
+                        : (
+                            String(row?.balance?.currency || 'EUR').toUpperCase() === 'EUR'
+                                ? (Number(row.balance.value) || 0)
+                                : null
+                        )
+                }));
+            });
+        }
+
+        if (Number.isFinite(Number(historyData.missing_fx_count))) {
+            missingFxCount = Number(historyData.missing_fx_count);
+        }
+    } else {
+        const accountsById = new Map(validAccounts.map((acc) => [String(acc.id), acc]));
+        const dateKeys = collectDateRangeKeys(transactions);
+        const dailyDelta = {};
+        transactions.forEach((tx) => {
+            const account = accountsById.get(String(tx.account_id));
+            if (!account || account.balanceEurValue === null) return;
+            const key = toDateKey(tx.date);
+            if (!dailyDelta[key]) {
+                dailyDelta[key] = { checking: 0, savings: 0, investment: 0 };
+            }
+            dailyDelta[key][account.account_type] = (dailyDelta[key][account.account_type] || 0) + (Number(tx.amount) || 0);
+        });
+
+        const running = { ...totals };
+        for (let i = dateKeys.length - 1; i >= 0; i -= 1) {
+            const key = dateKeys[i];
+            const pointDate = new Date(`${key}T00:00:00`);
+
+            ['checking', 'savings', 'investment'].forEach((type) => {
+                series[type].unshift({ date: pointDate, total: running[type] || 0 });
+            });
+
+            const delta = dailyDelta[key];
+            if (delta) {
+                ['checking', 'savings', 'investment'].forEach((type) => {
+                    running[type] = (running[type] || 0) - (delta[type] || 0);
+                });
+            }
         }
     }
 
@@ -881,7 +967,7 @@ function calculateBalanceMetrics(transactions, accounts) {
         totals,
         grouped,
         series,
-        nonEurCount
+        missingFxCount
     };
 }
 
@@ -952,7 +1038,7 @@ function processAndRenderData(data) {
     
     const filtered = applyClientFilters(data);
     const normalized = normalizeTransactions(filtered);
-    balanceMetrics = calculateBalanceMetrics(normalized, accountsList);
+    balanceMetrics = calculateBalanceMetrics(normalized, accountsList, balanceHistoryData);
     const kpis = calculateKPIs(normalized);
     renderKPIs(kpis, normalized);
     renderBalanceKPIs(balanceMetrics);
@@ -1017,6 +1103,20 @@ function formatCurrency(value) {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
     }).format(value);
+}
+
+function formatCurrencyWithCode(value, currencyCode = 'EUR') {
+    const code = String(currencyCode || 'EUR').toUpperCase();
+    try {
+        return new Intl.NumberFormat('nl-NL', {
+            style: 'currency',
+            currency: code,
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(value);
+    } catch (error) {
+        return `${Number(value || 0).toFixed(2)} ${code}`;
+    }
 }
 
 function formatPercent(value) {
@@ -1166,6 +1266,12 @@ function renderBalanceKPIs(metrics) {
         if (savingsEl) savingsEl.textContent = 'N/A';
         if (checkingTrendEl) checkingTrendEl.textContent = 'N/A';
         if (savingsTrendEl) savingsTrendEl.textContent = 'N/A';
+        ['checkingSparkline', 'savingsBalanceSparkline'].forEach((chartId) => {
+            if (chartRegistry.chartjs[chartId]) {
+                chartRegistry.chartjs[chartId].destroy();
+                delete chartRegistry.chartjs[chartId];
+            }
+        });
         return;
     }
 
@@ -1195,15 +1301,17 @@ function showBalanceDetail(type) {
     };
     const label = labels[type] || 'Rekeningen';
     const accounts = [...(balanceMetrics.grouped[type] || [])].sort((a, b) => b.balanceValue - a.balanceValue);
-    const total = accounts.reduce((sum, acc) => sum + acc.balanceValue, 0);
-    const nonEurNote = balanceMetrics.nonEurCount > 0
-        ? ` (${balanceMetrics.nonEurCount} non-EUR rekening(en) uitgesloten)`
+    const total = accounts.reduce((sum, acc) => sum + (Number(acc.balanceEurValue) || 0), 0);
+    const nonEurNote = balanceMetrics.missingFxCount > 0
+        ? ` (${balanceMetrics.missingFxCount} non-EUR rekening(en) zonder FX-rate)`
         : '';
 
     const rows = accounts.length
         ? accounts.map((acc) => ({
             label: acc.description || `Account ${acc.id}`,
-            value: formatCurrency(acc.balanceValue)
+            value: acc.balanceEurValue === null
+                ? `${formatCurrencyWithCode(acc.balanceValue, acc.balanceCurrency)} (niet omgerekend)`
+                : `${formatCurrency(acc.balanceEurValue)}${acc.balanceCurrency !== 'EUR' ? ` (${formatCurrencyWithCode(acc.balanceValue, acc.balanceCurrency)})` : ''}`
         }))
         : [{ label: 'Geen EUR-rekeningen beschikbaar.', value: '' }];
 
@@ -1212,7 +1320,7 @@ function showBalanceDetail(type) {
         const trace = {
             type: 'bar',
             orientation: 'h',
-            x: accounts.map((acc) => acc.balanceValue).reverse(),
+            x: accounts.map((acc) => Number(acc.balanceEurValue) || 0).reverse(),
             y: accounts.map((acc) => acc.description || `Account ${acc.id}`).reverse(),
             marker: {
                 color: accounts.map((acc) => (
@@ -1221,7 +1329,11 @@ function showBalanceDetail(type) {
                     '#38bdf8'
                 )).reverse()
             },
-            text: accounts.map((acc) => formatCurrency(acc.balanceValue)).reverse(),
+            text: accounts.map((acc) => (
+                acc.balanceEurValue === null
+                    ? `${formatCurrencyWithCode(acc.balanceValue, acc.balanceCurrency)}`
+                    : formatCurrency(acc.balanceEurValue)
+            )).reverse(),
             textposition: 'outside',
             hovertemplate: '%{y}<br>%{x:.2f} EUR<extra></extra>'
         };

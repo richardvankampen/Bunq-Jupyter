@@ -26,6 +26,12 @@ services:
       DEFAULT_PAGE_SIZE: "${DEFAULT_PAGE_SIZE:-500}"
       MAX_PAGE_SIZE: "${MAX_PAGE_SIZE:-2000}"
       MAX_DAYS: "${MAX_DAYS:-3650}"
+      DATA_DB_ENABLED: "${DATA_DB_ENABLED:-true}"
+      DATA_DB_PATH: "${DATA_DB_PATH:-config/dashboard_data.db}"
+      FX_ENABLED: "${FX_ENABLED:-true}"
+      FX_RATE_SOURCE: "${FX_RATE_SOURCE:-frankfurter}"
+      FX_REQUEST_TIMEOUT_SECONDS: "${FX_REQUEST_TIMEOUT_SECONDS:-8}"
+      FX_CACHE_HOURS: "${FX_CACHE_HOURS:-24}"
 
     secrets:
       - source: bunq_basic_auth_password
@@ -37,8 +43,8 @@ services:
       - source: bunq_vaultwarden_client_secret
         target: vaultwarden_client_secret
       # Optional: only when USE_VAULTWARDEN=false
-      - source: bunq_api_key
-        target: bunq_api_key
+      # - source: bunq_api_key
+      #   target: bunq_api_key
 
     volumes:
       # Persistent storage for Bunq context and logs (Synology bind mounts)
@@ -98,5 +104,5 @@ secrets:
   bunq_vaultwarden_client_secret:
     external: true
   # Optional: only when USE_VAULTWARDEN=false
-  bunq_api_key:
-    external: true
+  # bunq_api_key:
+  #   external: true
