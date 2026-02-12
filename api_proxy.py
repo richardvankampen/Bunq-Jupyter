@@ -64,12 +64,28 @@ def resolve_monetary_account_endpoint():
     if _MONETARY_ACCOUNT_ENDPOINT is not None:
         return _MONETARY_ACCOUNT_ENDPOINT
 
+    def _is_monetary_list_endpoint(name, candidate):
+        if candidate is None:
+            return False
+        if not callable(getattr(candidate, 'list', None)):
+            return False
+        normalized = name.lower().replace('_', '')
+        return 'monetary' in normalized and 'account' in normalized
+
     direct_candidates = ('MonetaryAccountBank', 'MonetaryAccount')
     for name in direct_candidates:
         candidate = getattr(endpoint, name, None)
-        if candidate is not None and callable(getattr(candidate, 'list', None)):
+        if _is_monetary_list_endpoint(name, candidate):
             _MONETARY_ACCOUNT_ENDPOINT = candidate
             logger.info(f"Using bunq endpoint class: {name}")
+            return _MONETARY_ACCOUNT_ENDPOINT
+
+    # Some sdk variants export differently named endpoint classes directly on `endpoint`.
+    for attr_name in dir(endpoint):
+        candidate = getattr(endpoint, attr_name, None)
+        if _is_monetary_list_endpoint(attr_name, candidate):
+            _MONETARY_ACCOUNT_ENDPOINT = candidate
+            logger.info(f"Using bunq endpoint class: {attr_name}")
             return _MONETARY_ACCOUNT_ENDPOINT
 
     endpoint_path = getattr(endpoint, '__path__', None)
@@ -77,15 +93,16 @@ def resolve_monetary_account_endpoint():
         base_module = endpoint.__name__
         for module_info in pkgutil.iter_modules(endpoint_path):
             module_name = module_info.name
-            if not module_name.startswith('monetary_account'):
+            normalized_module = module_name.lower().replace('_', '')
+            if 'monetary' not in normalized_module or 'account' not in normalized_module:
                 continue
             try:
                 module = importlib.import_module(f"{base_module}.{module_name}")
             except Exception:
                 continue
-            for class_name in direct_candidates:
+            for class_name in dir(module):
                 candidate = getattr(module, class_name, None)
-                if candidate is not None and callable(getattr(candidate, 'list', None)):
+                if _is_monetary_list_endpoint(class_name, candidate):
                     _MONETARY_ACCOUNT_ENDPOINT = candidate
                     logger.info(f"Using bunq endpoint class: {module_name}.{class_name}")
                     return _MONETARY_ACCOUNT_ENDPOINT
