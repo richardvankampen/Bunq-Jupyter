@@ -501,6 +501,130 @@ function setupEventListeners() {
         const value = parseInt(e.target.value, 10);
         updateRacingChart(value);
     });
+
+    // Card actions (fullscreen)
+    setupCardActionButtons();
+
+    // Keep charts responsive when viewport size changes
+    window.addEventListener('resize', () => {
+        resizeAllCharts();
+    });
+}
+
+function getFullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement || null;
+}
+
+async function requestElementFullscreen(element) {
+    if (element.requestFullscreen) {
+        await element.requestFullscreen();
+        return;
+    }
+    if (element.webkitRequestFullscreen) {
+        element.webkitRequestFullscreen();
+        return;
+    }
+    if (element.msRequestFullscreen) {
+        element.msRequestFullscreen();
+    }
+}
+
+async function exitBrowserFullscreen() {
+    if (document.exitFullscreen) {
+        await document.exitFullscreen();
+        return;
+    }
+    if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+        return;
+    }
+    if (document.msExitFullscreen) {
+        document.msExitFullscreen();
+    }
+}
+
+async function toggleCardFullscreen(card) {
+    const fullscreenElement = getFullscreenElement();
+    if (fullscreenElement === card) {
+        await exitBrowserFullscreen();
+        return;
+    }
+    if (fullscreenElement) {
+        await exitBrowserFullscreen();
+    }
+    await requestElementFullscreen(card);
+}
+
+function updateFullscreenButtonState() {
+    const fullscreenElement = getFullscreenElement();
+    const buttons = document.querySelectorAll('.action-btn[title="Fullscreen"], .action-btn[title="Exit Fullscreen"]');
+
+    buttons.forEach((button) => {
+        const card = button.closest('.viz-card');
+        const icon = button.querySelector('i');
+        const isActive = Boolean(fullscreenElement && card && fullscreenElement === card);
+
+        button.classList.toggle('is-active', isActive);
+        button.title = isActive ? 'Exit Fullscreen' : 'Fullscreen';
+
+        if (icon) {
+            icon.classList.toggle('fa-expand', !isActive);
+            icon.classList.toggle('fa-compress', isActive);
+        }
+    });
+
+    setTimeout(resizeAllCharts, 150);
+}
+
+function setupCardActionButtons() {
+    const fullscreenButtons = document.querySelectorAll('.action-btn[title="Fullscreen"]');
+    fullscreenButtons.forEach((button) => {
+        button.addEventListener('click', async () => {
+            const card = button.closest('.viz-card');
+            if (!card) return;
+            try {
+                await toggleCardFullscreen(card);
+            } catch (error) {
+                console.error('Fullscreen failed:', error);
+            }
+        });
+    });
+
+    document.addEventListener('fullscreenchange', updateFullscreenButtonState);
+    document.addEventListener('webkitfullscreenchange', updateFullscreenButtonState);
+    document.addEventListener('MSFullscreenChange', updateFullscreenButtonState);
+}
+
+function resizeAllCharts() {
+    const plotlyContainers = [
+        'cashflowChart',
+        'sankeyChart',
+        'sunburstChart',
+        'timeTravelChart',
+        'heatmapChart',
+        'merchantsChart',
+        'racingChart'
+    ];
+
+    if (window.Plotly?.Plots?.resize) {
+        plotlyContainers.forEach((id) => {
+            const container = document.getElementById(id);
+            if (!container) return;
+            try {
+                window.Plotly.Plots.resize(container);
+            } catch (error) {
+                // Safe no-op: ignore containers that have no Plotly instance yet.
+            }
+        });
+    }
+
+    Object.values(chartRegistry.chartjs).forEach((chart) => {
+        try {
+            chart?.resize();
+        } catch (error) {
+            // Safe no-op for charts that are not ready yet.
+        }
+    });
 }
 
 // ============================================
