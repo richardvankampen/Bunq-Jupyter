@@ -2165,7 +2165,7 @@ if not has_config('FLASK_SECRET_KEY', 'flask_secret_key'):
 # BUNQ API INITIALIZATION
 # ============================================
 
-def init_bunq(force_recreate=False, refresh_key=False):
+def init_bunq(force_recreate=False, refresh_key=False, run_auto_whitelist=True):
     """Initialize Bunq API context with READ-ONLY access."""
     global API_KEY
 
@@ -2204,7 +2204,7 @@ def init_bunq(force_recreate=False, refresh_key=False):
         logger.info(f"   Environment: {ENVIRONMENT_LABEL}")
         logger.info(f"   Access Level: READ-ONLY")
 
-        if AUTO_SET_BUNQ_WHITELIST_IP:
+        if run_auto_whitelist and AUTO_SET_BUNQ_WHITELIST_IP:
             try:
                 whitelist_result = set_bunq_api_whitelist_ip(
                     target_ip=None,
@@ -2386,7 +2386,11 @@ def set_bunq_whitelist_ip():
         cache.clear()
         _FX_RUNTIME_CACHE.clear()
 
-    if not init_bunq(force_recreate=force_recreate, refresh_key=refresh_key):
+    if not init_bunq(
+        force_recreate=force_recreate,
+        refresh_key=refresh_key,
+        run_auto_whitelist=False
+    ):
         return jsonify({
             'success': False,
             'error': 'Bunq API is not initialized'
@@ -2404,6 +2408,108 @@ def set_bunq_whitelist_ip():
         'success': True,
         'message': 'Bunq API allowlist updated',
         'data': result
+    })
+
+@app.route('/api/admin/maintenance/run', methods=['POST'])
+@requires_auth
+@rate_limit('general')
+def run_admin_maintenance():
+    """
+    Run bundled admin maintenance from dashboard UI with explicit options.
+    This replaces most manual SSH maintenance flow for Bunq/Vaultwarden operations.
+    """
+    payload = request.get_json(silent=True) or {}
+
+    auto_target_ip = parse_bool(payload.get('auto_target_ip'), default=True)
+    set_whitelist_ip = parse_bool(payload.get('set_whitelist_ip'), default=True)
+    deactivate_others = parse_bool(payload.get('deactivate_others'), default=False)
+    refresh_key = parse_bool(payload.get('refresh_key'), default=True)
+    force_recreate = parse_bool(payload.get('force_recreate'), default=True)
+    clear_runtime_cache = parse_bool(payload.get('clear_runtime_cache'), default=True)
+
+    target_ip = payload.get('target_ip')
+    try:
+        target_ip = validate_ipv4_or_none(target_ip)
+    except ValueError as exc:
+        return jsonify({
+            'success': False,
+            'error': str(exc)
+        }), 400
+
+    if not auto_target_ip and not target_ip and set_whitelist_ip:
+        return jsonify({
+            'success': False,
+            'error': 'target_ip is required when auto_target_ip=false'
+        }), 400
+
+    maintenance_steps = []
+    whitelist_result = None
+
+    if clear_runtime_cache:
+        cache.clear()
+        _FX_RUNTIME_CACHE.clear()
+        maintenance_steps.append('runtime_cache_cleared')
+
+    # Always re-init Bunq context in this maintenance flow (with caller-controlled options).
+    initialized = init_bunq(
+        force_recreate=force_recreate,
+        refresh_key=refresh_key,
+        run_auto_whitelist=False
+    )
+    if not initialized:
+        return jsonify({
+            'success': False,
+            'error': 'Failed to initialize Bunq API context',
+            'data': {
+                'steps': maintenance_steps,
+                'api_initialized': False
+            }
+        }), 500
+    maintenance_steps.append('bunq_initialized')
+
+    resolved_target_ip = target_ip
+    if set_whitelist_ip:
+        effective_target_ip = target_ip
+        if auto_target_ip and not effective_target_ip:
+            effective_target_ip = None  # set_bunq_api_whitelist_ip resolves current egress IP
+
+        whitelist_result = set_bunq_api_whitelist_ip(
+            target_ip=effective_target_ip,
+            deactivate_others=deactivate_others
+        )
+        if not whitelist_result.get('success'):
+            return jsonify({
+                'success': False,
+                'error': whitelist_result.get('error', 'Failed to update Bunq allowlist IP'),
+                'data': {
+                    'steps': maintenance_steps,
+                    'api_initialized': True,
+                    'whitelist': whitelist_result
+                }
+            }), 500
+        resolved_target_ip = whitelist_result.get('target_ip')
+        maintenance_steps.append('bunq_whitelist_updated')
+
+    return jsonify({
+        'success': True,
+        'message': 'Admin maintenance completed',
+        'data': {
+            'steps': maintenance_steps,
+            'api_initialized': True,
+            'context_file': CONFIG_FILE,
+            'context_exists': os.path.exists(CONFIG_FILE),
+            'egress_ip': get_public_egress_ip(),
+            'resolved_target_ip': resolved_target_ip,
+            'whitelist': whitelist_result,
+            'options': {
+                'auto_target_ip': auto_target_ip,
+                'set_whitelist_ip': set_whitelist_ip,
+                'deactivate_others': deactivate_others,
+                'refresh_key': refresh_key,
+                'force_recreate': force_recreate,
+                'clear_runtime_cache': clear_runtime_cache
+            }
+        }
     })
 
 @app.route('/api/accounts', methods=['GET'])

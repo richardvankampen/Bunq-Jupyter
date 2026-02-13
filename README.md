@@ -20,8 +20,7 @@ Read-only dashboard dat data uit de Bunq API haalt en overzichtelijk visualiseer
 - 11+ visualisaties (cashflow, trends, categorieën)
 - Caching en pagination voor performance
 - Synology‑ready deployment
-- Admin maintenance tools in Settings (status, egress IP, Bunq context re-init)
-- Admin knop `Set Bunq API whitelist IP` (optioneel met handmatig IP)
+- Admin maintenance tools in Settings (status, egress IP, Bunq context re-init, bundled maintenance run met opties)
 
 **Visualisaties:**
 - KPI Cards (inkomsten/uitgaven/sparen)

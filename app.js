@@ -6,6 +6,16 @@
 // Global Configuration
 const DEFAULT_API_ENDPOINT = `${window.location.origin}/api`;
 const ACCOUNT_STORAGE_KEY = 'selectedAccountIds';
+const ADMIN_MAINTENANCE_OPTIONS_KEY = 'adminMaintenanceOptions';
+const DEFAULT_ADMIN_MAINTENANCE_OPTIONS = {
+    set_whitelist_ip: true,
+    auto_target_ip: true,
+    deactivate_others: false,
+    refresh_key: true,
+    force_recreate: true,
+    clear_runtime_cache: true,
+    load_status_after: true
+};
 const CONFIG = {
     apiEndpoint: localStorage.getItem('apiEndpoint') || DEFAULT_API_ENDPOINT,
     refreshInterval: parseInt(localStorage.getItem('refreshInterval')) || 0,
@@ -48,6 +58,74 @@ function loadSelectedAccountIds() {
 }
 
 loadSelectedAccountIds();
+
+function loadAdminMaintenanceOptions() {
+    try {
+        const stored = JSON.parse(localStorage.getItem(ADMIN_MAINTENANCE_OPTIONS_KEY) || '{}');
+        return {
+            ...DEFAULT_ADMIN_MAINTENANCE_OPTIONS,
+            ...(stored && typeof stored === 'object' ? stored : {})
+        };
+    } catch (error) {
+        console.warn('Failed to parse admin maintenance options from storage');
+        return { ...DEFAULT_ADMIN_MAINTENANCE_OPTIONS };
+    }
+}
+
+function saveAdminMaintenanceOptions(options) {
+    localStorage.setItem(ADMIN_MAINTENANCE_OPTIONS_KEY, JSON.stringify(options));
+}
+
+function getAdminMaintenanceOptionsFromUI() {
+    return {
+        set_whitelist_ip: document.getElementById('adminOptionSetWhitelist')?.checked ?? DEFAULT_ADMIN_MAINTENANCE_OPTIONS.set_whitelist_ip,
+        auto_target_ip: document.getElementById('adminOptionAutoTargetIp')?.checked ?? DEFAULT_ADMIN_MAINTENANCE_OPTIONS.auto_target_ip,
+        deactivate_others: document.getElementById('adminDeactivateOtherIps')?.checked ?? DEFAULT_ADMIN_MAINTENANCE_OPTIONS.deactivate_others,
+        refresh_key: document.getElementById('adminOptionRefreshKey')?.checked ?? DEFAULT_ADMIN_MAINTENANCE_OPTIONS.refresh_key,
+        force_recreate: document.getElementById('adminOptionForceRecreate')?.checked ?? DEFAULT_ADMIN_MAINTENANCE_OPTIONS.force_recreate,
+        clear_runtime_cache: document.getElementById('adminOptionClearRuntimeCache')?.checked ?? DEFAULT_ADMIN_MAINTENANCE_OPTIONS.clear_runtime_cache,
+        load_status_after: document.getElementById('adminOptionLoadStatusAfter')?.checked ?? DEFAULT_ADMIN_MAINTENANCE_OPTIONS.load_status_after
+    };
+}
+
+function applyAdminMaintenanceOptionsToUI() {
+    const options = loadAdminMaintenanceOptions();
+    const optionSetWhitelist = document.getElementById('adminOptionSetWhitelist');
+    const optionAutoTargetIp = document.getElementById('adminOptionAutoTargetIp');
+    const optionRefreshKey = document.getElementById('adminOptionRefreshKey');
+    const optionForceRecreate = document.getElementById('adminOptionForceRecreate');
+    const optionClearRuntimeCache = document.getElementById('adminOptionClearRuntimeCache');
+    const optionLoadStatusAfter = document.getElementById('adminOptionLoadStatusAfter');
+    const optionDeactivateOthers = document.getElementById('adminDeactivateOtherIps');
+    const whitelistIpInput = document.getElementById('adminWhitelistIp');
+
+    if (optionSetWhitelist) optionSetWhitelist.checked = Boolean(options.set_whitelist_ip);
+    if (optionAutoTargetIp) optionAutoTargetIp.checked = Boolean(options.auto_target_ip);
+    if (optionRefreshKey) optionRefreshKey.checked = Boolean(options.refresh_key);
+    if (optionForceRecreate) optionForceRecreate.checked = Boolean(options.force_recreate);
+    if (optionClearRuntimeCache) optionClearRuntimeCache.checked = Boolean(options.clear_runtime_cache);
+    if (optionLoadStatusAfter) optionLoadStatusAfter.checked = Boolean(options.load_status_after);
+    if (optionDeactivateOthers) optionDeactivateOthers.checked = Boolean(options.deactivate_others);
+
+    if (optionAutoTargetIp) {
+        optionAutoTargetIp.disabled = !options.set_whitelist_ip;
+    }
+    if (optionDeactivateOthers) {
+        optionDeactivateOthers.disabled = !options.set_whitelist_ip;
+    }
+    if (whitelistIpInput) {
+        whitelistIpInput.disabled = !options.set_whitelist_ip || Boolean(options.auto_target_ip);
+        whitelistIpInput.placeholder = options.auto_target_ip
+            ? 'IPv4 (auto: huidige egress IP)'
+            : 'IPv4 (bijv. 203.0.113.10)';
+    }
+}
+
+function handleAdminMaintenanceOptionChange() {
+    const options = getAdminMaintenanceOptionsFromUI();
+    saveAdminMaintenanceOptions(options);
+    applyAdminMaintenanceOptionsToUI();
+}
 
 // ============================================
 // SESSION-BASED AUTHENTICATION
@@ -513,6 +591,14 @@ function setupEventListeners() {
     document.getElementById('adminCheckEgressIp')?.addEventListener('click', checkAdminEgressIp);
     document.getElementById('adminSetWhitelistIp')?.addEventListener('click', setBunqWhitelistIp);
     document.getElementById('adminReinitBunq')?.addEventListener('click', reinitializeBunqContext);
+    document.getElementById('adminRunMaintenance')?.addEventListener('click', runBundledAdminMaintenance);
+    document.getElementById('adminOptionSetWhitelist')?.addEventListener('change', handleAdminMaintenanceOptionChange);
+    document.getElementById('adminOptionAutoTargetIp')?.addEventListener('change', handleAdminMaintenanceOptionChange);
+    document.getElementById('adminOptionRefreshKey')?.addEventListener('change', handleAdminMaintenanceOptionChange);
+    document.getElementById('adminOptionForceRecreate')?.addEventListener('change', handleAdminMaintenanceOptionChange);
+    document.getElementById('adminOptionClearRuntimeCache')?.addEventListener('change', handleAdminMaintenanceOptionChange);
+    document.getElementById('adminOptionLoadStatusAfter')?.addEventListener('change', handleAdminMaintenanceOptionChange);
+    document.getElementById('adminDeactivateOtherIps')?.addEventListener('change', handleAdminMaintenanceOptionChange);
     
     // Time range
     document.getElementById('timeRange')?.addEventListener('change', (e) => {
@@ -2215,6 +2301,7 @@ function openSettings() {
     document.getElementById('useRealData').checked = CONFIG.useRealData;
     document.getElementById('excludeInternalTransfers').checked = CONFIG.excludeInternalTransfers;
     renderAccountsFilter(accountsList);
+    applyAdminMaintenanceOptionsToUI();
     
     document.getElementById('settingsModal')?.classList.add('active');
     if (isAuthenticated) {
@@ -2463,10 +2550,66 @@ async function reinitializeBunqContext() {
         await loadAdminStatus();
         renderAdminStatusPanel(
             adminStatusData,
-            'Bunq context opnieuw geïnitialiseerd. Controleer bunq whitelist met het getoonde egress IP. Voor service-level startup check: IMAGE_TAG=$(git rev-parse --short HEAD) sh scripts/restart_bunq_service.sh',
+            'Bunq context opnieuw geïnitialiseerd. Controleer Bunq whitelist met het getoonde egress IP of gebruik "Run maintenance now".',
             false,
             egressIp
         );
+    });
+}
+
+async function runBundledAdminMaintenance() {
+    if (!isAuthenticated) {
+        renderAdminStatusPanel(adminStatusData, 'Login required om maintenance uit te voeren.', true);
+        return;
+    }
+
+    const options = getAdminMaintenanceOptionsFromUI();
+    const ipInputEl = document.getElementById('adminWhitelistIp');
+    const targetIp = (ipInputEl?.value || '').trim();
+    const targetLabel = options.auto_target_ip ? 'current egress IP (auto)' : (targetIp || '(missing)');
+
+    if (options.set_whitelist_ip && !options.auto_target_ip && !targetIp) {
+        renderAdminStatusPanel(adminStatusData, 'Vul een IPv4 in of zet "Gebruik automatisch egress IP" aan.', true);
+        return;
+    }
+
+    const confirmed = window.confirm(
+        'Run admin maintenance now?\n' +
+        `- Recreate context: ${options.force_recreate ? 'yes' : 'no'}\n` +
+        `- Refresh API key: ${options.refresh_key ? 'yes' : 'no'}\n` +
+        `- Set whitelist IP: ${options.set_whitelist_ip ? targetLabel : 'no'}\n` +
+        `- Deactivate other IPs: ${options.deactivate_others ? 'yes' : 'no'}`
+    );
+    if (!confirmed) return;
+
+    await runAdminAction('adminRunMaintenance', '<i class="fas fa-spinner fa-spin"></i> Running...', async () => {
+        const response = await authenticatedFetch(`${CONFIG.apiEndpoint}/admin/maintenance/run`, {
+            method: 'POST',
+            body: JSON.stringify({
+                target_ip: targetIp || null,
+                auto_target_ip: options.auto_target_ip,
+                set_whitelist_ip: options.set_whitelist_ip,
+                deactivate_others: options.deactivate_others,
+                refresh_key: options.refresh_key,
+                force_recreate: options.force_recreate,
+                clear_runtime_cache: options.clear_runtime_cache
+            })
+        });
+
+        if (!response || !response.success) {
+            renderAdminStatusPanel(adminStatusData, response?.error || 'Admin maintenance mislukt.', true);
+            return;
+        }
+
+        const data = response.data || {};
+        const steps = Array.isArray(data.steps) ? data.steps.join(', ') : '';
+        const message = `Maintenance voltooid${steps ? ` (${steps})` : ''}.`;
+        const egressIp = data.egress_ip || data.resolved_target_ip || '';
+
+        if (options.load_status_after) {
+            await loadAdminStatus();
+        }
+        renderAdminStatusPanel(adminStatusData, message, false, egressIp);
     });
 }
 

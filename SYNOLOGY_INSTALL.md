@@ -719,6 +719,14 @@ In **Settings → Admin Maintenance (P1)** kun je als ingelogde admin:
 - `Check egress IP`: huidig publiek uitgaand IP van de container
 - `Set Bunq API whitelist IP`: zet gekozen IPv4 (of auto egress) op ACTIVE via Bunq API
 - `Reinit Bunq context`: context verwijderen + opnieuw opbouwen (installation/device registration)
+- `Run maintenance now`: voert in 1 actie de ingestelde onderhoudsopties uit
+
+Standaardopties in het panel:
+- `Set whitelist IP`: aan
+- `Auto target IP (egress)`: aan
+- `Refresh API key`: aan
+- `Recreate context`: aan
+- `Clear runtime cache`: aan
 
 Gebruik `Reinit Bunq context` na:
 - API key rotatie

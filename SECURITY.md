@@ -258,8 +258,8 @@ sh scripts/register_bunq_ip.sh
 
 **Alternatief via UI (P1):**
 - Open dashboard → Settings → `Admin Maintenance (P1)`
-- Klik `Set Bunq API whitelist IP` om het gekozen IP (of auto egress IP) op ACTIVE te zetten
-- Klik daarna `Reinit Bunq context` om installation/device opnieuw te registreren
+- Gebruik `Run maintenance now` met standaardopties
+  - `Set whitelist IP` + `Auto target IP (egress)` + `Refresh key` + `Recreate context`
 - Gebruik `Check egress IP` om te verifiëren welk publiek IP ge-whitelist moet zijn
 
 Dit script:

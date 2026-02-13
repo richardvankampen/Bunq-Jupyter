@@ -1134,6 +1134,16 @@ body.reduce-animations .play-btn:hover {
     background: rgba(251, 191, 36, 0.16);
 }
 
+.admin-tool-btn-primary {
+    border-color: rgba(34, 197, 94, 0.6);
+    background: rgba(34, 197, 94, 0.14);
+}
+
+.admin-tool-btn-primary:hover {
+    border-color: rgba(34, 197, 94, 0.95);
+    background: rgba(34, 197, 94, 0.2);
+}
+
 .admin-tools-inline {
     margin-top: var(--spacing-sm);
     display: grid;
@@ -1155,6 +1165,21 @@ body.reduce-animations .play-btn:hover {
 }
 
 .admin-tools-inline label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.admin-tools-options {
+    margin-top: var(--spacing-xs);
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 0.35rem var(--spacing-sm);
+}
+
+.admin-tools-options label {
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
@@ -1342,7 +1367,8 @@ body.reduce-animations .play-btn:hover {
         flex-direction: column;
     }
 
-    .admin-tools-inline label {
+    .admin-tools-inline label,
+    .admin-tools-options label {
         align-items: flex-start;
     }
 }

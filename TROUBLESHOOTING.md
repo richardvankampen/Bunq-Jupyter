@@ -474,7 +474,8 @@ sh scripts/register_bunq_ip.sh
 # Ensure API key is active and allowlist includes that IP.
 
 # Via UI kan dit ook:
-# Settings -> Admin Maintenance (P1) -> Check egress IP / Set Bunq API whitelist IP / Reinit Bunq context
+# Settings -> Admin Maintenance (P1) -> Run maintenance now
+# (met opties voor auto egress IP, whitelist update, refresh key en context recreate)
 
 # If you rotated API key AND use direct fallback mode (USE_VAULTWARDEN=false), update secret first:
 printf "Paste BUNQ API key: "
