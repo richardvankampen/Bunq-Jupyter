@@ -556,7 +556,7 @@ sudo docker build --no-cache -t bunq-dashboard:$TAG .
 sudo docker tag bunq-dashboard:$TAG bunq-dashboard:local
 
 # Architectuur-opmerking (Bitwarden CLI):
-# - amd64/Intel NAS: native bw binary (kleiner image)
+# - amd64/Intel NAS: native bw binary (kleiner image), met automatische npm fallback als release-asset/checksum tijdelijk ontbreekt
 # - arm64 NAS: @bitwarden/cli via npm fallback (groter image, maar nodig op ARM)
 #
 # Let op (pip warning):

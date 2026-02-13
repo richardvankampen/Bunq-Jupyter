@@ -29,21 +29,38 @@ RUN apt-get update && DEBIAN_FRONTEND=${DEBIAN_FRONTEND} apt-get install -y \
        unzip \
        ca-certificates \
     && ARCH="$(dpkg --print-architecture)" \
+    && install_bw_native() { \
+         ZIP_NAME="$1"; \
+         SHA_FILE="$2"; \
+         BASE_URL="https://github.com/bitwarden/clients/releases/download/cli-v${BW_VERSION}"; \
+         curl -fsSL -o /tmp/bw.zip "${BASE_URL}/${ZIP_NAME}" || return 1; \
+         EXPECTED_SHA="${BW_SHA256}"; \
+         if [ -z "${EXPECTED_SHA}" ]; then \
+           EXPECTED_SHA="$(curl -fsSL "${BASE_URL}/${SHA_FILE}" 2>/dev/null | awk '$2 ~ /bw(-oss)?-linux-.*\\.zip$/ { print $1; exit }' || true)"; \
+         fi; \
+         test -n "${EXPECTED_SHA}" || return 1; \
+         echo "${EXPECTED_SHA}  /tmp/bw.zip" | sha256sum -c - >/dev/null; \
+         unzip -q /tmp/bw.zip -d /tmp; \
+         install -m 0755 /tmp/bw /usr/local/bin/bw; \
+         rm -f /tmp/bw.zip /tmp/bw; \
+         return 0; \
+       } \
+    && install_bw_npm() { \
+         DEBIAN_FRONTEND=${DEBIAN_FRONTEND} apt-get install -y --no-install-recommends nodejs npm; \
+         npm install -g "@bitwarden/cli@${BW_NPM_VERSION}"; \
+         npm cache clean --force; \
+       } \
     && if [ "${ARCH}" = "amd64" ]; then \
-         curl -fsSL -o /tmp/bw.zip "https://github.com/bitwarden/clients/releases/download/cli-v${BW_VERSION}/bw-linux-${BW_VERSION}.zip" \
-         && EXPECTED_SHA="${BW_SHA256}" \
-         && if [ -z "${EXPECTED_SHA}" ]; then \
-              EXPECTED_SHA="$(curl -fsSL "https://github.com/bitwarden/clients/releases/download/cli-v${BW_VERSION}/bw-linux-sha256-${BW_VERSION}.txt" | awk '$2 ~ /bw-linux-.*\\.zip$/ { print $1; exit }')"; \
-            fi \
-         && test -n "${EXPECTED_SHA}" \
-         && echo "${EXPECTED_SHA}  /tmp/bw.zip" | sha256sum -c - \
-         && unzip -q /tmp/bw.zip -d /tmp \
-         && install -m 0755 /tmp/bw /usr/local/bin/bw \
-         && rm -f /tmp/bw.zip /tmp/bw; \
+         if install_bw_native "bw-linux-${BW_VERSION}.zip" "bw-linux-sha256-${BW_VERSION}.txt"; then \
+           echo "Installed native Bitwarden CLI binary (${BW_VERSION})."; \
+         elif install_bw_native "bw-oss-linux-${BW_VERSION}.zip" "bw-oss-linux-sha256-${BW_VERSION}.txt"; then \
+           echo "Installed native Bitwarden OSS CLI binary (${BW_VERSION})."; \
+         else \
+           echo "WARN: native Bitwarden CLI download/checksum unavailable for ${BW_VERSION}; falling back to npm." >&2; \
+           install_bw_npm; \
+         fi; \
        elif [ "${ARCH}" = "arm64" ]; then \
-         DEBIAN_FRONTEND=${DEBIAN_FRONTEND} apt-get install -y --no-install-recommends nodejs npm \
-         && npm install -g "@bitwarden/cli@${BW_NPM_VERSION}" \
-         && npm cache clean --force; \
+         install_bw_npm; \
        else \
          echo "Unsupported architecture for Bitwarden CLI: ${ARCH}" >&2; exit 1; \
        fi \

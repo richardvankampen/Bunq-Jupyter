@@ -13,7 +13,7 @@ Read-only dashboard dat data uit de Bunq API haalt en overzichtelijk visualiseer
 - Real-time data uit de Bunq API (read-only)
 - Vaultwarden-first key management (aanbevolen), met optionele directe fallback
 - Vaultwarden decrypt via `bw` CLI (master-password secret) voor betrouwbare key retrieval
-  - Intel/amd64: native pinned `bw` binary
+  - Intel/amd64: native pinned `bw` binary (met automatische npm fallback als release-asset tijdelijk ontbreekt)
   - ARM64: pinned `@bitwarden/cli` npm fallback (officially recommended for ARM)
 - Lokale history-opslag (SQLite) voor langere-termijn inzichten
 - EUR-totalen voor niet-EUR rekeningen (met FX conversie en caching)
