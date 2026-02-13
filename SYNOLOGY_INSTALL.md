@@ -739,6 +739,8 @@ In **Settings → Admin Maintenance (P1)** kun je als ingelogde admin:
 - `Set Bunq API whitelist IP`: zet gekozen IPv4 (of auto egress) op ACTIVE via Bunq API
 - `Reinit Bunq context`: context verwijderen + opnieuw opbouwen (installation/device registration)
 - `Run maintenance now`: voert in 1 actie de ingestelde onderhoudsopties uit
+- `Show install/update commands`: toont copy-ready terminalstappen voor host-level install/update script
+- `Show restart/validate commands`: toont copy-ready terminalstappen voor restart/startup-validatie
 
 Standaardopties in het panel:
 - `Set whitelist IP`: altijd actief in maintenance flow

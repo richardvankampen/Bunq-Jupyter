@@ -6,6 +6,7 @@
 // Global Configuration
 const DEFAULT_API_ENDPOINT = `${window.location.origin}/api`;
 const ACCOUNT_STORAGE_KEY = 'selectedAccountIds';
+const DEFAULT_NAS_WORKDIR = '/volume1/docker/bunq-dashboard';
 const ADMIN_MAINTENANCE_OPTIONS_KEY = 'adminMaintenanceOptions';
 const DEFAULT_ADMIN_MAINTENANCE_OPTIONS = {
     auto_target_ip: false,
@@ -582,6 +583,12 @@ function setupEventListeners() {
     document.getElementById('adminSetWhitelistIp')?.addEventListener('click', setBunqWhitelistIp);
     document.getElementById('adminReinitBunq')?.addEventListener('click', reinitializeBunqContext);
     document.getElementById('adminRunMaintenance')?.addEventListener('click', runBundledAdminMaintenance);
+    document.getElementById('adminShowInstallUpdateCmd')?.addEventListener('click', () => {
+        renderAdminTerminalPanel('installUpdate');
+    });
+    document.getElementById('adminShowRestartCmd')?.addEventListener('click', () => {
+        renderAdminTerminalPanel('restartValidate');
+    });
     document.getElementById('adminOptionAutoTargetIp')?.addEventListener('change', handleAdminMaintenanceOptionChange);
     document.getElementById('adminOptionRefreshKey')?.addEventListener('change', handleAdminMaintenanceOptionChange);
     document.getElementById('adminOptionForceRecreate')?.addEventListener('change', handleAdminMaintenanceOptionChange);
@@ -594,6 +601,18 @@ function setupEventListeners() {
         if (ipInputEl && autoTargetEl && ipInputEl.value.trim()) {
             autoTargetEl.checked = false;
             handleAdminMaintenanceOptionChange();
+        }
+    });
+    document.getElementById('adminTerminalPanel')?.addEventListener('click', async (event) => {
+        const button = event.target.closest('[data-copy-command]');
+        if (!button) return;
+        const command = button.getAttribute('data-copy-command') || '';
+        if (!command) return;
+        try {
+            await copyTextToClipboard(command);
+            renderAdminStatusPanel(adminStatusData, 'Command copied to clipboard.', false);
+        } catch (error) {
+            renderAdminStatusPanel(adminStatusData, 'Copy failed. Select command manually.', true);
         }
     });
     
@@ -2299,6 +2318,7 @@ function openSettings() {
     document.getElementById('excludeInternalTransfers').checked = CONFIG.excludeInternalTransfers;
     renderAccountsFilter(accountsList);
     applyAdminMaintenanceOptionsToUI();
+    renderAdminTerminalPanel(null);
     
     document.getElementById('settingsModal')?.classList.add('active');
     if (isAuthenticated) {
@@ -2310,6 +2330,7 @@ function openSettings() {
 
 function closeSettings() {
     document.getElementById('settingsModal')?.classList.remove('active');
+    renderAdminTerminalPanel(null);
 }
 
 function saveSettings() {
@@ -2383,6 +2404,78 @@ function validatePublicIpv4Input(inputValue) {
     }
 
     return { valid: true, normalized: octets.join('.') };
+}
+
+function getTerminalCommandSets() {
+    const workdir = DEFAULT_NAS_WORKDIR;
+    return {
+        installUpdate: {
+            title: 'Install/Update via Terminal',
+            help: 'Gebruik dit voor veilige host-level update (build/deploy) zonder Docker host-control vanuit de webapp.',
+            commands: [
+                `cd ${workdir}`,
+                `git -c safe.directory=${workdir} pull --ff-only`,
+                'sh scripts/install_or_update_synology.sh'
+            ]
+        },
+        restartValidate: {
+            title: 'Restart/Validate via Terminal',
+            help: 'Gebruik dit voor startup-validatie en image cleanup op de host.',
+            commands: [
+                `cd ${workdir}`,
+                'sh scripts/restart_bunq_service.sh',
+                'sudo docker service logs --since 3m bunq_bunq-dashboard | grep -E "Vaultwarden|API key retrieved from vault|No valid API key|whitelist"'
+            ]
+        }
+    };
+}
+
+async function copyTextToClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+    }
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.position = 'fixed';
+    el.style.left = '-9999px';
+    document.body.appendChild(el);
+    el.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(el);
+    return copied;
+}
+
+function renderAdminTerminalPanel(mode) {
+    const panel = document.getElementById('adminTerminalPanel');
+    if (!panel) return;
+
+    const sets = getTerminalCommandSets();
+    const selected = sets[mode];
+    if (!selected) {
+        panel.style.display = 'none';
+        panel.innerHTML = '';
+        return;
+    }
+
+    const rows = selected.commands.map((command, index) => {
+        const cmdId = `${mode}-cmd-${index}`;
+        return `
+            <pre class="admin-terminal-command" id="${cmdId}">${escapeHtml(command)}</pre>
+            <div class="admin-terminal-actions">
+                <button type="button" class="admin-terminal-copy" data-copy-command="${escapeHtml(command)}">
+                    <i class="fas fa-copy"></i> Copy command
+                </button>
+            </div>
+        `;
+    }).join('');
+
+    panel.innerHTML = `
+        <div class="admin-terminal-title"><i class="fas fa-terminal"></i> ${escapeHtml(selected.title)}</div>
+        <p class="admin-terminal-help">${escapeHtml(selected.help)}</p>
+        ${rows}
+    `;
+    panel.style.display = 'grid';
 }
 
 function renderAdminStatusPanel(statusData = null, notice = '', isError = false, egressIp = '') {

@@ -549,6 +549,12 @@
                         <button type="button" class="admin-tool-btn admin-tool-btn-primary" id="adminRunMaintenance">
                             <i class="fas fa-play"></i> Run maintenance now
                         </button>
+                        <button type="button" class="admin-tool-btn" id="adminShowInstallUpdateCmd">
+                            <i class="fas fa-terminal"></i> Show install/update commands
+                        </button>
+                        <button type="button" class="admin-tool-btn" id="adminShowRestartCmd">
+                            <i class="fas fa-terminal"></i> Show restart/validate commands
+                        </button>
                     </div>
                     <div class="admin-tools-inline">
                         <label for="adminWhitelistIp">IP to set on Bunq API whitelist (public IPv4)</label>
@@ -583,6 +589,7 @@
                     <div id="adminStatusPanel" class="admin-status-panel">
                         <p class="setting-help">Open eerst Settings en klik op <strong>Check status</strong>.</p>
                     </div>
+                    <div id="adminTerminalPanel" class="admin-terminal-panel" style="display: none;"></div>
                 </div>
             </div>
             <div class="modal-footer">

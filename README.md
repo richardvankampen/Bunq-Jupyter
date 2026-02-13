@@ -21,6 +21,7 @@ Read-only dashboard dat data uit de Bunq API haalt en overzichtelijk visualiseer
 - Caching en pagination voor performance
 - Synology‑ready deployment
 - Admin maintenance tools in Settings (status, egress IP, Bunq context re-init, bundled maintenance run met opties)
+- Terminal-helper knoppen in admin panel (tonen copy-ready install/update en restart commando's)
 
 **Visualisaties:**
 - KPI Cards (inkomsten/uitgaven/sparen)

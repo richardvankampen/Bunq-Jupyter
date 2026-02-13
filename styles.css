@@ -1220,6 +1220,61 @@ body.reduce-animations .play-btn:hover {
     color: #fca5a5;
 }
 
+.admin-terminal-panel {
+    margin-top: var(--spacing-sm);
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    border-radius: var(--radius-sm);
+    background: rgba(15, 23, 42, 0.38);
+    padding: var(--spacing-sm);
+    display: grid;
+    gap: 0.5rem;
+}
+
+.admin-terminal-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #a7f3d0;
+}
+
+.admin-terminal-help {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.admin-terminal-command {
+    margin: 0;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: rgba(2, 6, 23, 0.8);
+    padding: 0.55rem 0.65rem;
+    font-size: 0.78rem;
+    color: #e2e8f0;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.admin-terminal-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.admin-terminal-copy {
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: rgba(59, 130, 246, 0.14);
+    color: var(--text-primary);
+    padding: 0.35rem 0.6rem;
+    cursor: pointer;
+    font-size: 0.76rem;
+}
+
+.admin-terminal-copy:hover {
+    border-color: var(--accent-primary);
+}
+
 .modal-footer {
     padding: var(--spacing-lg);
     border-top: 1px solid var(--glass-border);
