@@ -535,6 +535,18 @@ De `api_proxy.py` bevat standaard Vaultwarden-integratie. Zorg dat je:
 
 ### Stap 3.6: Build en Start
 
+**Snelle route (aanbevolen):**
+```bash
+cd /volume1/docker/bunq-dashboard
+sh scripts/install_or_update_synology.sh
+```
+
+Dit script doet:
+- Swarm/network checks
+- check op vereiste secrets (maakt ze niet automatisch aan)
+- build + deploy + startup-validatie
+
+**Handmatige route (equivalent):**
 ```bash
 cd /volume1/docker/bunq-dashboard
 
@@ -674,6 +686,13 @@ Package Center → Container Manager → Settings
 
 ### Updates
 
+Snelle update (aanbevolen):
+```bash
+cd /volume1/docker/bunq-dashboard
+sh scripts/install_or_update_synology.sh
+```
+
+Handmatig:
 ```bash
 cd /volume1/docker/bunq-dashboard
 

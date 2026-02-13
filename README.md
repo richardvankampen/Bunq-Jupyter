@@ -52,9 +52,10 @@ Meer details: [SECURITY.md](SECURITY.md)
 4. Gebruik **Vaultwarden als primaire Bunq API key bron** (`USE_VAULTWARDEN=true`)
 5. Gebruik `VAULTWARDEN_ACCESS_METHOD=cli` + secret `bunq_vaultwarden_master_password`
 6. Gebruik directe `bunq_api_key` alleen als nood-fallback (`USE_VAULTWARDEN=false`)
-7. Bij nieuwe Bunq API key of IP-wijziging: run `scripts/register_bunq_ip.sh`
-8. Na deploy/herstart kun je startup-validatie doen met `scripts/restart_bunq_service.sh` (gebruikt standaard git-tag + ruimt oude `bunq-dashboard` images op)
-9. Build/deploy probeert whitelisting ook automatisch (best effort) via Bunq API calls
+7. Voor install/update op Synology: run `sh scripts/install_or_update_synology.sh` (guided, veilig; geen automatische secret-rotatie)
+8. Bij nieuwe Bunq API key of IP-wijziging: run `scripts/register_bunq_ip.sh`
+9. Na deploy/herstart kun je startup-validatie doen met `scripts/restart_bunq_service.sh` (gebruikt standaard git-tag + ruimt oude `bunq-dashboard` images op)
+10. Build/deploy probeert whitelisting ook automatisch (best effort) via Bunq API calls
 
 Snelle check na deploy:
 ```bash
@@ -73,6 +74,12 @@ Nuttige script-opties:
 - `AUTO_TAG_FROM_GIT=false` om zonder image-tag override te herstarten
 - `CLEANUP_OLD_IMAGES=false` om geen oude images te verwijderen
 - `KEEP_IMAGE_COUNT=3` om meer recente oudere tags te bewaren
+
+Geautomatiseerde install/update (na Vaultwarden setup):
+```bash
+cd /volume1/docker/bunq-dashboard
+sh scripts/install_or_update_synology.sh
+```
 
 ---
 
