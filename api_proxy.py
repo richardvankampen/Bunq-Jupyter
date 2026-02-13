@@ -2328,7 +2328,7 @@ def reinitialize_bunq_context():
     """
     payload = request.get_json(silent=True) or {}
     force_recreate = parse_bool(payload.get('force_recreate'), default=True)
-    refresh_key = parse_bool(payload.get('refresh_key'), default=True)
+    refresh_key = parse_bool(payload.get('refresh_key'), default=False)
     clear_runtime_cache = parse_bool(payload.get('clear_runtime_cache'), default=True)
 
     if clear_runtime_cache:

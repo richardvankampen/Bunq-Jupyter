@@ -11,7 +11,7 @@ const DEFAULT_ADMIN_MAINTENANCE_OPTIONS = {
     set_whitelist_ip: true,
     auto_target_ip: true,
     deactivate_others: false,
-    refresh_key: true,
+    refresh_key: false,
     force_recreate: true,
     clear_runtime_cache: true,
     load_status_after: true

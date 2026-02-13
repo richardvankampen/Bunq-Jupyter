@@ -724,7 +724,7 @@ In **Settings → Admin Maintenance (P1)** kun je als ingelogde admin:
 Standaardopties in het panel:
 - `Set whitelist IP`: aan
 - `Auto target IP (egress)`: aan
-- `Refresh API key`: aan
+- `Refresh API key`: uit (alleen aanzetten na API key rotatie)
 - `Recreate context`: aan
 - `Clear runtime cache`: aan
 
