@@ -729,6 +729,7 @@ Standaardopties in het panel:
 - `Clear runtime cache`: aan
 - Veld `IP to set on Bunq API whitelist`: vul handmatig in als auto-target uit staat;
   zodra je een IP invult gaat auto-target automatisch uit.
+- Handmatig IP moet een publiek extern IPv4-adres zijn (lokale/private ranges worden geweigerd).
 
 Gebruik `Reinit Bunq context` na:
 - API key rotatie

@@ -107,7 +107,7 @@ function applyAdminMaintenanceOptionsToUI() {
         whitelistIpInput.disabled = Boolean(options.auto_target_ip);
         whitelistIpInput.placeholder = options.auto_target_ip
             ? 'IPv4 (auto: huidige egress IP)'
-            : 'IPv4 (bijv. 203.0.113.10)';
+            : 'IPv4 (bijv. 8.8.8.8)';
     }
 }
 
@@ -2348,6 +2348,43 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function validatePublicIpv4Input(inputValue) {
+    const value = String(inputValue || '').trim();
+    if (!value) {
+        return { valid: false, error: 'IP-adres is leeg.' };
+    }
+
+    if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(value)) {
+        return { valid: false, error: 'Ongeldig IPv4 formaat. Gebruik bijvoorbeeld 8.8.8.8' };
+    }
+
+    const octets = value.split('.').map((item) => Number(item));
+    if (octets.some((item) => !Number.isInteger(item) || item < 0 || item > 255)) {
+        return { valid: false, error: 'Ongeldig IPv4 formaat (octets moeten tussen 0 en 255 liggen).' };
+    }
+
+    const [a, b, c] = octets;
+    const isPrivateOrReserved =
+        a === 10 ||
+        a === 127 ||
+        a === 0 ||
+        (a === 169 && b === 254) ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        (a === 100 && b >= 64 && b <= 127) || // CGNAT
+        (a === 192 && b === 0 && c === 2) ||
+        (a === 198 && b === 51 && c === 100) ||
+        (a === 203 && b === 0 && c === 113) ||
+        (a === 198 && (b === 18 || b === 19)) ||
+        a >= 224;
+
+    if (isPrivateOrReserved) {
+        return { valid: false, error: 'Gebruik een publiek extern IPv4-adres (geen lokaal/private range).' };
+    }
+
+    return { valid: true, normalized: octets.join('.') };
+}
+
 function renderAdminStatusPanel(statusData = null, notice = '', isError = false, egressIp = '') {
     const panel = document.getElementById('adminStatusPanel');
     if (!panel) return;
@@ -2477,8 +2514,20 @@ async function setBunqWhitelistIp() {
 
     const ipInputEl = document.getElementById('adminWhitelistIp');
     const deactivateEl = document.getElementById('adminDeactivateOtherIps');
-    const targetIp = (ipInputEl?.value || '').trim();
+    let targetIp = (ipInputEl?.value || '').trim();
     const deactivateOthers = Boolean(deactivateEl?.checked);
+
+    if (targetIp) {
+        const ipValidation = validatePublicIpv4Input(targetIp);
+        if (!ipValidation.valid) {
+            renderAdminStatusPanel(adminStatusData, ipValidation.error, true);
+            return;
+        }
+        targetIp = ipValidation.normalized;
+        if (ipInputEl) {
+            ipInputEl.value = targetIp;
+        }
+    }
     const targetLabel = targetIp || 'current egress IP (auto)';
 
     const confirmed = window.confirm(
@@ -2562,13 +2611,25 @@ async function runBundledAdminMaintenance() {
 
     const options = getAdminMaintenanceOptionsFromUI();
     const ipInputEl = document.getElementById('adminWhitelistIp');
-    const targetIp = (ipInputEl?.value || '').trim();
-    const targetLabel = options.auto_target_ip ? 'current egress IP (auto)' : targetIp;
+    let targetIp = (ipInputEl?.value || '').trim();
 
     if (!options.auto_target_ip && !targetIp) {
         renderAdminStatusPanel(adminStatusData, 'Vul een IPv4 in of zet "Gebruik automatisch egress IP" aan.', true);
         return;
     }
+
+    if (!options.auto_target_ip) {
+        const ipValidation = validatePublicIpv4Input(targetIp);
+        if (!ipValidation.valid) {
+            renderAdminStatusPanel(adminStatusData, ipValidation.error, true);
+            return;
+        }
+        targetIp = ipValidation.normalized;
+        if (ipInputEl) {
+            ipInputEl.value = targetIp;
+        }
+    }
+    const targetLabel = options.auto_target_ip ? 'current egress IP (auto)' : targetIp;
 
     const confirmed = window.confirm(
         'Run admin maintenance now?\n' +

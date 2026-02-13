@@ -262,6 +262,7 @@ sh scripts/register_bunq_ip.sh
   - Whitelist update is altijd actief
   - `Auto target IP (egress)` standaard uit (of vul handmatig IP in)
   - `Refresh key` standaard uit (alleen na key-rotatie)
+- Handmatig IP wordt gevalideerd als publiek extern IPv4 (geen private/lokale ranges)
 - Gebruik `Check egress IP` om te verifiëren welk publiek IP ge-whitelist moet zijn
 
 Dit script:

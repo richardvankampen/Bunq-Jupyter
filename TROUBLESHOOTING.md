@@ -467,7 +467,7 @@ docker service logs bunq_bunq-dashboard | grep -E "Incorrect API key or IP addre
 cd /volume1/docker/bunq-dashboard
 sh scripts/register_bunq_ip.sh
 # Optional non-interactive target:
-# TARGET_IP=203.0.113.10 DEACTIVATE_OTHERS=true sh scripts/register_bunq_ip.sh
+# TARGET_IP=8.8.8.8 DEACTIVATE_OTHERS=true sh scripts/register_bunq_ip.sh
 
 # Script output shows the container egress public IP.
 # In Bunq app: Profile -> Security -> API Keys

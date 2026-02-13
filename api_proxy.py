@@ -763,7 +763,7 @@ def update_credential_password_ip_entry(user_id, credential_password_ip_id, ip_e
 
     raise RuntimeError(f"bunq-sdk credential-password-ip update failed: {last_exc}")
 
-def validate_ipv4_or_none(ip_value):
+def validate_ipv4_or_none(ip_value, require_public=False):
     if ip_value is None:
         return None
     candidate = str(ip_value).strip()
@@ -772,6 +772,8 @@ def validate_ipv4_or_none(ip_value):
     parsed = ipaddress.ip_address(candidate)
     if parsed.version != 4:
         raise ValueError(f"Only IPv4 is supported by Bunq allowlist (received {candidate})")
+    if require_public and not parsed.is_global:
+        raise ValueError(f"Bunq allowlist requires a public/external IPv4 (received {candidate})")
     return str(parsed)
 
 def extract_credential_profile_id(profile):
@@ -821,9 +823,9 @@ def set_bunq_api_whitelist_ip(target_ip=None, deactivate_others=False):
     Ensure target IPv4 is ACTIVE in Bunq API allowlist via SDK endpoints.
     """
     try:
-        resolved_target_ip = validate_ipv4_or_none(target_ip)
+        resolved_target_ip = validate_ipv4_or_none(target_ip, require_public=True)
         if not resolved_target_ip:
-            resolved_target_ip = validate_ipv4_or_none(get_public_egress_ip())
+            resolved_target_ip = validate_ipv4_or_none(get_public_egress_ip(), require_public=True)
     except ValueError as exc:
         return {
             'success': False,
@@ -2375,7 +2377,7 @@ def set_bunq_whitelist_ip():
 
     target_ip = payload.get('ip')
     try:
-        target_ip = validate_ipv4_or_none(target_ip)
+        target_ip = validate_ipv4_or_none(target_ip, require_public=True)
     except ValueError as exc:
         return jsonify({
             'success': False,
@@ -2428,7 +2430,7 @@ def run_admin_maintenance():
 
     target_ip = payload.get('target_ip')
     try:
-        target_ip = validate_ipv4_or_none(target_ip)
+        target_ip = validate_ipv4_or_none(target_ip, require_public=True)
     except ValueError as exc:
         return jsonify({
             'success': False,
