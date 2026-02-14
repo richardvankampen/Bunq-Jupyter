@@ -42,7 +42,6 @@ const chartRegistry = {
 };
 let racingData = null;
 let racingPlayInterval = null;
-let timeTravelSpinInterval = null;
 
 function loadSelectedAccountIds() {
     try {
@@ -637,7 +636,6 @@ function setupEventListeners() {
     });
     
     // Animation controls
-    document.getElementById('play3D')?.addEventListener('click', play3DAnimation);
     document.getElementById('playRace')?.addEventListener('click', playRacingAnimation);
     document.getElementById('raceSlider')?.addEventListener('input', (e) => {
         const value = parseInt(e.target.value, 10);
@@ -1956,6 +1954,141 @@ function showTransactionDetail(detailType) {
         return;
     }
 
+    if (detailType === 'budget-coach') {
+        const monthly = summarizeMonthlyBudgetDiscipline(transactions, 12);
+        if (!monthly.length) {
+            openDetailModal({
+                title: '<i class="fas fa-scale-balanced"></i> Budget discipline detail',
+                summary: 'Onvoldoende data voor maandelijkse budgetanalyse.',
+                rows: [{ label: 'Geen complete maandinkomsten gevonden.', value: '' }],
+                chart: null
+            });
+            return;
+        }
+
+        const labels = monthly.map((row) => row.monthLabel);
+        const avgEssentials = monthly.reduce((sum, row) => sum + row.essentialsPct, 0) / monthly.length;
+        const avgDiscretionary = monthly.reduce((sum, row) => sum + row.discretionaryPct, 0) / monthly.length;
+        const avgSavings = monthly.reduce((sum, row) => sum + row.savingsPct, 0) / monthly.length;
+        const latest = monthly[monthly.length - 1];
+
+        const traces = [
+            {
+                type: 'bar',
+                name: 'Essentials',
+                x: labels,
+                y: monthly.map((row) => row.essentials),
+                marker: { color: 'rgba(59,130,246,0.82)' },
+                hovertemplate: '%{x}<br>Essentials: %{y:.2f} EUR<extra></extra>'
+            },
+            {
+                type: 'bar',
+                name: 'Discretionary',
+                x: labels,
+                y: monthly.map((row) => row.discretionary),
+                marker: { color: 'rgba(245,158,11,0.82)' },
+                hovertemplate: '%{x}<br>Discretionary: %{y:.2f} EUR<extra></extra>'
+            },
+            {
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Income',
+                x: labels,
+                y: monthly.map((row) => row.income),
+                line: { color: '#22c55e', width: 2.5 },
+                marker: { size: 6 },
+                hovertemplate: '%{x}<br>Income: %{y:.2f} EUR<extra></extra>'
+            },
+            {
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Net savings',
+                x: labels,
+                y: monthly.map((row) => row.netSavings),
+                line: { color: '#38bdf8', width: 2.5, dash: 'dot' },
+                marker: { size: 6 },
+                hovertemplate: '%{x}<br>Net savings: %{y:.2f} EUR<extra></extra>'
+            }
+        ];
+        const layout = {
+            barmode: 'stack',
+            margin: { t: 10, r: 20, l: 52, b: 48 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#cbd5f5' },
+            xaxis: { tickangle: -20 },
+            yaxis: { gridcolor: 'rgba(255,255,255,0.08)', title: 'EUR' },
+            legend: { orientation: 'h', y: -0.2 }
+        };
+
+        openDetailModal({
+            title: '<i class="fas fa-scale-balanced"></i> Budget discipline detail',
+            summary: `Gemiddeld: essentials ${avgEssentials.toFixed(1)}% (target 50%), discretionary ${avgDiscretionary.toFixed(1)}% (target 30%), savings ${avgSavings.toFixed(1)}% (target 20%). Laatste maand savings: ${latest.savingsPct.toFixed(1)}%.`,
+            rows: monthly.slice().reverse().map((row) => ({
+                label: `${row.monthLabel} · In ${formatCurrency(row.income)} · Need ${formatCurrency(row.essentials)} (${row.essentialsPct.toFixed(1)}%) · Want ${formatCurrency(row.discretionary)} (${row.discretionaryPct.toFixed(1)}%)`,
+                value: `Net ${formatCurrency(row.netSavings)} (${row.savingsPct.toFixed(1)}%)`
+            })),
+            chart: { trace: traces, layout }
+        });
+        return;
+    }
+
+    if (detailType === 'action-plan') {
+        const localKpis = calculateKPIs(transactions);
+        const windows = splitRollingWindows(transactions, 30);
+        const recentExpenses = windows.recent
+            .filter((transaction) => transaction.amount < 0)
+            .reduce((sum, transaction) => sum + Math.abs(transaction.amount || 0), 0);
+        const recentIncome = windows.recent
+            .filter((transaction) => transaction.amount > 0)
+            .reduce((sum, transaction) => sum + (transaction.amount || 0), 0);
+        const observedRecentDays = Math.max(new Set(windows.recent.map((transaction) => toDateKey(transaction.date))).size, 1);
+        const dailyBurn = Math.max((recentExpenses - recentIncome) / observedRecentDays, 0);
+        const liquidBalance = balanceMetrics
+            ? (Number(balanceMetrics.totals.checking) || 0) + (Number(balanceMetrics.totals.savings) || 0)
+            : null;
+        const actions = buildActionPlan(transactions, localKpis, liquidBalance, dailyBurn);
+
+        const chartRows = actions
+            .filter((action) => (Number(action.impact) || 0) > 0.01)
+            .slice(0, 8);
+        const chart = chartRows.length ? {
+            trace: {
+                type: 'bar',
+                orientation: 'h',
+                x: chartRows.map((action) => Number(action.impact) || 0).reverse(),
+                y: chartRows.map((action) => action.title).reverse(),
+                marker: {
+                    color: chartRows.map((action) => (
+                        action.priority === 1 ? 'rgba(239,68,68,0.82)' :
+                        action.priority === 2 ? 'rgba(245,158,11,0.82)' :
+                        'rgba(59,130,246,0.82)'
+                    )).reverse()
+                },
+                hovertemplate: '%{y}<br>Potentieel effect: %{x:.2f} EUR<extra></extra>'
+            },
+            layout: {
+                margin: { t: 10, r: 20, l: 180, b: 30 },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#cbd5f5' },
+                xaxis: { gridcolor: 'rgba(255,255,255,0.08)', title: 'EUR potentieel' },
+                yaxis: { automargin: true }
+            }
+        } : null;
+
+        openDetailModal({
+            title: '<i class="fas fa-list-check"></i> Action plan (prioriteit)',
+            summary: `Topprioriteiten op basis van huidige periode (${actions.length} acties).`,
+            rows: actions.map((action) => ({
+                label: `P${action.priority} · ${action.title}`,
+                value: `${action.summary}${(Number(action.impact) || 0) > 0.01 ? ` · Impact ${formatCurrency(action.impact)}` : ''}`
+            })),
+            chart
+        });
+        return;
+    }
+
     openDetailModal({
         title: '<i class="fas fa-info-circle"></i> Detail',
         summary: 'Geen detailweergave beschikbaar voor dit onderdeel.',
@@ -2048,38 +2181,74 @@ function renderSankeyChart(data) {
     if (!container) return;
 
     const incomeByCategory = {};
-    const expenseByCategory = {};
+    const essentialByCategory = {};
+    const discretionaryByCategory = {};
     let totalIncome = 0;
-    let totalExpenses = 0;
+    let totalEssentials = 0;
+    let totalDiscretionary = 0;
 
-    data.forEach((t) => {
-        const category = t.category || 'Overig';
-        if (t.amount >= 0) {
-            incomeByCategory[category] = (incomeByCategory[category] || 0) + t.amount;
-            totalIncome += t.amount;
-        } else {
-            const amount = Math.abs(t.amount);
-            expenseByCategory[category] = (expenseByCategory[category] || 0) + amount;
-            totalExpenses += amount;
+    data.forEach((transaction) => {
+        const category = transaction.category || 'Overig';
+        if ((transaction.amount || 0) >= 0) {
+            const amount = Number(transaction.amount) || 0;
+            incomeByCategory[category] = (incomeByCategory[category] || 0) + amount;
+            totalIncome += amount;
+            return;
         }
+
+        const expense = Math.abs(Number(transaction.amount) || 0);
+        if (isEssentialCategory(category)) {
+            essentialByCategory[category] = (essentialByCategory[category] || 0) + expense;
+            totalEssentials += expense;
+            return;
+        }
+        discretionaryByCategory[category] = (discretionaryByCategory[category] || 0) + expense;
+        totalDiscretionary += expense;
     });
 
-    const topIncome = Object.entries(incomeByCategory)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 4);
-    const topExpenses = Object.entries(expenseByCategory)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 7);
+    const totalExpenses = totalEssentials + totalDiscretionary;
+    if (totalIncome <= 0.01 && totalExpenses <= 0.01) {
+        Plotly.react(container, [], {
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#cbd5f5' },
+            annotations: [{
+                text: 'Geen geldstromen beschikbaar in deze periode.',
+                showarrow: false,
+                x: 0.5,
+                y: 0.5,
+                xref: 'paper',
+                yref: 'paper',
+                font: { size: 14, color: '#cbd5f5' }
+            }]
+        }, { displayModeBar: false, responsive: true });
+        return;
+    }
 
-    const labels = [...topIncome.map(([name]) => name), 'Cash In', ...topExpenses.map(([name]) => name)];
+    const topIncome = selectTopWithRemainder(Object.entries(incomeByCategory), 5, 'Overig inkomen');
+    const topEssential = selectTopWithRemainder(Object.entries(essentialByCategory), 5, 'Overig essentials');
+    const topDiscretionary = selectTopWithRemainder(Object.entries(discretionaryByCategory), 5, 'Overig discretionary');
+
+    const labels = [
+        ...topIncome.map(([name]) => `In: ${name}`),
+        'Cash In',
+        'Essentials',
+        'Discretionary',
+        ...topEssential.map(([name]) => `Need: ${name}`),
+        ...topDiscretionary.map(([name]) => `Want: ${name}`)
+    ];
     const source = [];
     const target = [];
     const value = [];
     const colors = [];
 
     const cashInIndex = topIncome.length;
+    const essentialsIndex = cashInIndex + 1;
+    const discretionaryIndex = cashInIndex + 2;
+    const needsStartIndex = discretionaryIndex + 1;
+    const wantsStartIndex = needsStartIndex + topEssential.length;
 
-    topIncome.forEach(([name, amount], idx) => {
+    topIncome.forEach(([, amount], idx) => {
         if (amount <= 0) return;
         source.push(idx);
         target.push(cashInIndex);
@@ -2087,12 +2256,34 @@ function renderSankeyChart(data) {
         colors.push('rgba(34,197,94,0.5)');
     });
 
-    topExpenses.forEach(([name, amount], idx) => {
-        if (amount <= 0) return;
+    if (totalEssentials > 0.01) {
         source.push(cashInIndex);
-        target.push(cashInIndex + 1 + idx);
+        target.push(essentialsIndex);
+        value.push(totalEssentials);
+        colors.push('rgba(59,130,246,0.42)');
+    }
+
+    if (totalDiscretionary > 0.01) {
+        source.push(cashInIndex);
+        target.push(discretionaryIndex);
+        value.push(totalDiscretionary);
+        colors.push('rgba(245,158,11,0.42)');
+    }
+
+    topEssential.forEach(([, amount], idx) => {
+        if (amount <= 0) return;
+        source.push(essentialsIndex);
+        target.push(needsStartIndex + idx);
         value.push(amount);
-        colors.push('rgba(239,68,68,0.45)');
+        colors.push('rgba(59,130,246,0.34)');
+    });
+
+    topDiscretionary.forEach(([, amount], idx) => {
+        if (amount <= 0) return;
+        source.push(discretionaryIndex);
+        target.push(wantsStartIndex + idx);
+        value.push(amount);
+        colors.push('rgba(245,158,11,0.34)');
     });
 
     const net = totalIncome - totalExpenses;
@@ -2121,6 +2312,11 @@ function renderSankeyChart(data) {
                 if (label === 'Cash In') return '#22c55e';
                 if (label === 'Net Saved') return '#38bdf8';
                 if (label === 'Buffer / Debt') return '#f59e0b';
+                if (label === 'Essentials') return '#3b82f6';
+                if (label === 'Discretionary') return '#f59e0b';
+                if (label.startsWith('Need:')) return '#60a5fa';
+                if (label.startsWith('Want:')) return '#fbbf24';
+                if (label.startsWith('In:')) return '#22c55e';
                 return getCategoryColor(label);
             }),
             line: { color: 'rgba(15,23,42,0.7)', width: 1.2 }
@@ -2184,36 +2380,65 @@ function renderSunburstChart(data) {
     const totalIncome = Array.from(incomeByCategory.values()).reduce((sum, amount) => sum + amount, 0);
     const totalExpenses = Array.from(expenseByCategory.values()).reduce((sum, amount) => sum + amount, 0);
 
+    if (totalIncome <= 0.01 && totalExpenses <= 0.01) {
+        Plotly.react(container, [], {
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#ffffff' },
+            annotations: [{
+                text: 'Geen categorie-data beschikbaar in deze periode.',
+                showarrow: false,
+                x: 0.5,
+                y: 0.5,
+                xref: 'paper',
+                yref: 'paper',
+                font: { size: 14, color: '#cbd5f5' }
+            }]
+        }, { displayModeBar: false, responsive: true });
+        return;
+    }
+
     pushNode('root', 'All', '', totalIncome + totalExpenses, '#334155');
     pushNode('income', 'Income', 'root', totalIncome, '#22c55e');
     pushNode('expenses', 'Expenses', 'root', totalExpenses, '#ef4444');
 
-    Array.from(incomeByCategory.entries())
-        .sort((a, b) => b[1] - a[1])
-        .forEach(([category, amount]) => {
-            pushNode(`income:${category}`, category, 'income', amount, getCategoryColor(category));
-        });
+    const incomeEntries = selectTopWithRemainder(
+        Array.from(incomeByCategory.entries()),
+        7,
+        'Overig inkomen'
+    );
+    incomeEntries.forEach(([category, amount]) => {
+        pushNode(`income:${category}`, category, 'income', amount, getCategoryColor(category));
+    });
 
-    Array.from(expenseByCategory.entries())
-        .sort((a, b) => b[1] - a[1])
-        .forEach(([category, amount]) => {
-            const categoryId = `expense:${category}`;
-            const categoryColor = getCategoryColor(category);
-            pushNode(categoryId, category, 'expenses', amount, categoryColor);
+    const expenseEntries = selectTopWithRemainder(
+        Array.from(expenseByCategory.entries()),
+        10,
+        'Overig categorieen'
+    );
+    expenseEntries.forEach(([category, amount]) => {
+        const categoryId = `expense:${category}`;
+        const categoryColor = getCategoryColor(category);
+        pushNode(categoryId, category, 'expenses', amount, categoryColor);
 
-            const merchants = Array.from((merchantByCategory.get(category) || new Map()).entries())
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 16);
-            merchants.forEach(([merchant, merchantAmount]) => {
-                pushNode(
-                    `${categoryId}:${merchant}`,
-                    merchant,
-                    categoryId,
-                    merchantAmount,
-                    hexToRgba(categoryColor, 0.82)
-                );
-            });
+        const merchantMap = merchantByCategory.get(category);
+        if (!merchantMap || !merchantMap.size) return;
+
+        const merchantEntries = selectTopWithRemainder(
+            Array.from(merchantMap.entries()),
+            12,
+            'Overig winkels'
+        );
+        merchantEntries.forEach(([merchant, merchantAmount]) => {
+            pushNode(
+                `${categoryId}:${merchant}`,
+                merchant,
+                categoryId,
+                merchantAmount,
+                hexToRgba(categoryColor, 0.82)
+            );
         });
+    });
 
     const trace = {
         type: 'sunburst',
@@ -2250,47 +2475,120 @@ function renderSunburstChart(data) {
 function renderTimeTravelChart(data) {
     const container = document.getElementById('timeTravelChart');
     if (!container) return;
-    
-    const sorted = [...data].sort((a, b) => a.date - b.date);
-    let cumulative = 0;
-    const x = [];
-    const y = [];
-    const z = [];
-    
-    sorted.forEach(t => {
-        cumulative += t.amount;
-        x.push(t.date);
-        y.push(cumulative);
-        z.push(t.amount);
-    });
-    
-    const trace = {
-        type: 'scatter3d',
-        mode: 'lines+markers',
-        x,
-        y,
-        z,
-        line: { color: '#8b5cf6', width: 4 },
-        marker: {
-            size: 3,
-            color: z,
-            colorscale: 'Viridis',
-            opacity: 0.8
-        }
-    };
-    
-    const layout = {
-        margin: { t: 0, r: 0, l: 0, b: 0 },
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        scene: {
-            xaxis: { title: 'Date', showgrid: false },
-            yaxis: { title: 'Cumulative', showgrid: false },
-            zaxis: { title: 'Amount', showgrid: false }
+
+    const monthly = summarizeMonthlyBudgetDiscipline(data, 12);
+    if (!monthly.length) {
+        Plotly.react(container, [], {
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#cbd5f5' },
+            annotations: [{
+                text: 'Onvoldoende data voor budgetdiscipline analyse.',
+                showarrow: false,
+                x: 0.5,
+                y: 0.5,
+                xref: 'paper',
+                yref: 'paper',
+                font: { size: 14, color: '#cbd5f5' }
+            }]
+        }, { displayModeBar: false, responsive: true });
+        return;
+    }
+
+    const labels = monthly.map((row) => row.monthLabel);
+    const essentials = monthly.map((row) => row.essentialsPct);
+    const discretionary = monthly.map((row) => row.discretionaryPct);
+    const savings = monthly.map((row) => row.savingsPct);
+    const minPct = Math.min(-20, ...savings.map((value) => Number(value) || 0));
+    const latest = monthly[monthly.length - 1];
+    const statusText = `Laatste maand: essentials ${latest.essentialsPct.toFixed(1)}% (target 50%), discretionary ${latest.discretionaryPct.toFixed(1)}% (target 30%), savings ${latest.savingsPct.toFixed(1)}% (target 20%).`;
+
+    const traces = [
+        {
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Essentials %',
+            x: labels,
+            y: essentials,
+            line: { color: '#3b82f6', width: 3 },
+            marker: { size: 7 },
+            hovertemplate: '%{x}<br>Essentials: %{y:.1f}%<extra></extra>'
         },
-        font: { color: '#cbd5f5' }
+        {
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Discretionary %',
+            x: labels,
+            y: discretionary,
+            line: { color: '#f59e0b', width: 3 },
+            marker: { size: 7 },
+            hovertemplate: '%{x}<br>Discretionary: %{y:.1f}%<extra></extra>'
+        },
+        {
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Savings %',
+            x: labels,
+            y: savings,
+            line: { color: '#22c55e', width: 3 },
+            marker: { size: 7 },
+            hovertemplate: '%{x}<br>Savings: %{y:.1f}%<extra></extra>'
+        },
+        {
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Target essentials (50%)',
+            x: labels,
+            y: labels.map(() => 50),
+            line: { color: 'rgba(59,130,246,0.65)', width: 1.8, dash: 'dot' },
+            hoverinfo: 'skip'
+        },
+        {
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Target discretionary (30%)',
+            x: labels,
+            y: labels.map(() => 30),
+            line: { color: 'rgba(245,158,11,0.65)', width: 1.8, dash: 'dot' },
+            hoverinfo: 'skip'
+        },
+        {
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Target savings (20%)',
+            x: labels,
+            y: labels.map(() => 20),
+            line: { color: 'rgba(34,197,94,0.65)', width: 1.8, dash: 'dot' },
+            hoverinfo: 'skip'
+        }
+    ];
+
+    const layout = {
+        margin: { t: 36, r: 20, l: 50, b: 44 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { color: '#cbd5f5' },
+        xaxis: { showgrid: false },
+        yaxis: {
+            title: '% van maandinkomen',
+            gridcolor: 'rgba(255,255,255,0.08)',
+            range: [Math.floor(minPct / 10) * 10, 100]
+        },
+        legend: { orientation: 'h', y: -0.22 },
+        annotations: [{
+            text: statusText,
+            showarrow: false,
+            x: 0,
+            y: 1.18,
+            xref: 'paper',
+            yref: 'paper',
+            xanchor: 'left',
+            align: 'left',
+            font: { size: 12, color: '#cbd5f5' }
+        }]
     };
-    
-    Plotly.react(container, [trace], layout, { displayModeBar: false, responsive: true });
+
+    Plotly.react(container, traces, layout, { displayModeBar: false, responsive: true });
 }
 
 function renderHeatmapChart(data) {
@@ -2501,6 +2799,67 @@ function renderRacingChart(data) {
 
 const ESSENTIAL_CATEGORIES = new Set(['Boodschappen', 'Wonen', 'Utilities', 'Vervoer', 'Zorg']);
 
+function isEssentialCategory(category) {
+    return ESSENTIAL_CATEGORIES.has(category || 'Overig');
+}
+
+function selectTopWithRemainder(entries, limit, otherLabel) {
+    const sorted = [...entries].sort((a, b) => b[1] - a[1]);
+    const top = sorted.slice(0, limit);
+    const remainder = sorted.slice(limit).reduce((sum, entry) => sum + (Number(entry[1]) || 0), 0);
+    if (remainder > 0.0001) {
+        top.push([otherLabel, remainder]);
+    }
+    return top;
+}
+
+function summarizeMonthlyBudgetDiscipline(transactions, maxMonths = 12) {
+    const byMonth = new Map();
+    (transactions || []).forEach((transaction) => {
+        if (!(transaction.date instanceof Date) || Number.isNaN(transaction.date.getTime())) return;
+        const monthKey = `${transaction.date.getFullYear()}-${String(transaction.date.getMonth() + 1).padStart(2, '0')}`;
+        if (!byMonth.has(monthKey)) {
+            byMonth.set(monthKey, {
+                monthKey,
+                income: 0,
+                essentials: 0,
+                discretionary: 0
+            });
+        }
+        const bucket = byMonth.get(monthKey);
+        const amount = Number(transaction.amount) || 0;
+        if (amount >= 0) {
+            bucket.income += amount;
+            return;
+        }
+        if (isEssentialCategory(transaction.category)) {
+            bucket.essentials += Math.abs(amount);
+        } else {
+            bucket.discretionary += Math.abs(amount);
+        }
+    });
+
+    return Array.from(byMonth.values())
+        .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
+        .slice(-maxMonths)
+        .map((row) => {
+            const netSavings = row.income - row.essentials - row.discretionary;
+            const denominator = row.income > 0.01 ? row.income : null;
+            return {
+                ...row,
+                monthLabel: new Date(`${row.monthKey}-01T00:00:00`).toLocaleDateString('nl-NL', {
+                    month: 'short',
+                    year: '2-digit'
+                }),
+                netSavings,
+                essentialsPct: denominator ? (row.essentials / denominator) * 100 : 0,
+                discretionaryPct: denominator ? (row.discretionary / denominator) * 100 : 0,
+                savingsPct: denominator ? (netSavings / denominator) * 100 : 0
+            };
+        })
+        .filter((row) => row.income > 0.01);
+}
+
 function buildExpenseByCategory(transactions) {
     const totals = {};
     (transactions || []).forEach((transaction) => {
@@ -2576,6 +2935,113 @@ function summarizeNeedsVsWants(transactions) {
     return summary;
 }
 
+function buildActionPlan(transactions, kpis, liquidBalance = null, dailyBurn = 0) {
+    const actions = [];
+    const monthly = summarizeMonthlyBudgetDiscipline(transactions, 6);
+    const latest = monthly[monthly.length - 1] || null;
+
+    if (latest && latest.income > 0.01) {
+        const savingsTarget = latest.income * 0.2;
+        const savingsGap = savingsTarget - latest.netSavings;
+        if (savingsGap > 1) {
+            actions.push({
+                priority: 1,
+                title: 'Verhoog netto sparen richting 20%',
+                summary: `Gap t.o.v. 20%-target: ${formatCurrency(savingsGap)} in ${latest.monthLabel}.`,
+                impact: savingsGap
+            });
+        }
+
+        const discretionaryTarget = latest.income * 0.3;
+        const discretionaryGap = latest.discretionary - discretionaryTarget;
+        if (discretionaryGap > 1) {
+            actions.push({
+                priority: 1,
+                title: 'Verlaag discretionary uitgaven',
+                summary: `Discretionary ${latest.discretionaryPct.toFixed(1)}% vs 30% target (${formatCurrency(discretionaryGap)} boven target).`,
+                impact: discretionaryGap
+            });
+        }
+
+        const essentialTarget = latest.income * 0.5;
+        const essentialGap = latest.essentials - essentialTarget;
+        if (essentialGap > 1) {
+            actions.push({
+                priority: 2,
+                title: 'Herzie vaste lasten / essentials',
+                summary: `Essentials ${latest.essentialsPct.toFixed(1)}% vs 50% target (${formatCurrency(essentialGap)} boven target).`,
+                impact: essentialGap
+            });
+        }
+    }
+
+    const windows = splitRollingWindows(transactions, 30);
+    const recentExpenses = windows.recent
+        .filter((transaction) => transaction.amount < 0)
+        .reduce((sum, transaction) => sum + Math.abs(transaction.amount || 0), 0);
+    const priorExpenses = windows.prior
+        .filter((transaction) => transaction.amount < 0)
+        .reduce((sum, transaction) => sum + Math.abs(transaction.amount || 0), 0);
+    if (priorExpenses > 0.01) {
+        const increasePct = ((recentExpenses - priorExpenses) / priorExpenses) * 100;
+        if (increasePct > 10) {
+            actions.push({
+                priority: 2,
+                title: 'Stop uitgavengroei',
+                summary: `Uitgaven stegen ${increasePct.toFixed(1)}% in laatste 30 dagen.`,
+                impact: Math.max(recentExpenses - priorExpenses, 0)
+            });
+        }
+    }
+
+    const merchantExpenses = {};
+    (transactions || []).forEach((transaction) => {
+        if ((transaction.amount || 0) >= 0) return;
+        const merchant = resolveMerchantLabel(transaction);
+        merchantExpenses[merchant] = (merchantExpenses[merchant] || 0) + Math.abs(transaction.amount || 0);
+    });
+    const topMerchant = Object.entries(merchantExpenses).sort((a, b) => b[1] - a[1])[0];
+    if (topMerchant && kpis.expenses > 0.01) {
+        const share = (topMerchant[1] / kpis.expenses) * 100;
+        if (share > 25) {
+            actions.push({
+                priority: 3,
+                title: 'Verlaag merchant-concentratie',
+                summary: `${topMerchant[0]} is ${share.toFixed(1)}% van alle uitgaven.`,
+                impact: topMerchant[1] * 0.1
+            });
+        }
+    }
+
+    if (liquidBalance !== null && dailyBurn > 0.01) {
+        const runwayDays = liquidBalance / dailyBurn;
+        if (runwayDays < 90) {
+            const targetBuffer = dailyBurn * 90;
+            const bufferGap = Math.max(targetBuffer - liquidBalance, 0);
+            actions.push({
+                priority: 2,
+                title: 'Bouw 3 maanden buffer op',
+                summary: `Runway ${Math.round(runwayDays)} dagen. Aanvullende buffer nodig: ${formatCurrency(bufferGap)}.`,
+                impact: bufferGap
+            });
+        }
+    }
+
+    if (!actions.length) {
+        actions.push({
+            priority: 3,
+            title: 'Huidige koers vasthouden',
+            summary: 'Kernratio’s liggen rond target. Monitor maandelijks en optimaliseer op categorie-niveau.',
+            impact: 0
+        });
+    }
+
+    return actions.sort((a, b) => {
+        if (a.priority !== b.priority) return a.priority - b.priority;
+        return (Number(b.impact) || 0) - (Number(a.impact) || 0);
+    });
+}
+
 function renderInsights(data, kpis) {
     const biggestCategory = document.getElementById('biggestCategory');
     const avgDaily = document.getElementById('avgDaily');
@@ -2583,7 +3049,9 @@ function renderInsights(data, kpis) {
     const trendInsight = document.getElementById('trendInsight');
     const liquidityRunway = document.getElementById('liquidityRunway');
     const needsVsWants = document.getElementById('needsVsWants');
+    const budgetRuleFit = document.getElementById('budgetRuleFit');
     const topMerchantShare = document.getElementById('topMerchantShare');
+    const nextBestAction = document.getElementById('nextBestAction');
     const projectedMonthNet = document.getElementById('projectedMonthNet');
 
     const expenseByCategory = buildExpenseByCategory(data);
@@ -2646,6 +3114,16 @@ function renderInsights(data, kpis) {
         }
     }
 
+    const monthlyBudget = summarizeMonthlyBudgetDiscipline(data, 6);
+    const latestBudget = monthlyBudget[monthlyBudget.length - 1] || null;
+    if (budgetRuleFit) {
+        if (!latestBudget) {
+            budgetRuleFit.textContent = 'N/A';
+        } else {
+            budgetRuleFit.textContent = `N ${latestBudget.essentialsPct.toFixed(0)} / W ${latestBudget.discretionaryPct.toFixed(0)} / S ${latestBudget.savingsPct.toFixed(0)}`;
+        }
+    }
+
     const merchantExpenses = {};
     data.forEach((transaction) => {
         if ((transaction.amount || 0) >= 0) return;
@@ -2677,6 +3155,18 @@ function renderInsights(data, kpis) {
             const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
             const projected = (monthNet / elapsedDays) * daysInMonth;
             projectedMonthNet.textContent = formatCurrency(projected);
+        }
+    }
+
+    const actionPlan = buildActionPlan(data, kpis, liquidBalance, dailyBurn);
+    if (nextBestAction) {
+        const topAction = actionPlan[0];
+        if (!topAction) {
+            nextBestAction.textContent = 'N/A';
+        } else {
+            nextBestAction.textContent = topAction.impact > 0.01
+                ? `${topAction.title} (${formatCurrency(topAction.impact)})`
+                : topAction.title;
         }
     }
 }
@@ -3228,32 +3718,6 @@ function initializeParticles() {
         },
         retina_detect: true
     });
-}
-
-function play3DAnimation() {
-    const container = document.getElementById('timeTravelChart');
-    if (!container) return;
-    
-    const button = document.getElementById('play3D');
-    if (timeTravelSpinInterval) {
-        clearInterval(timeTravelSpinInterval);
-        timeTravelSpinInterval = null;
-        button?.classList.remove('active');
-        return;
-    }
-    
-    let angle = 0;
-    button?.classList.add('active');
-    timeTravelSpinInterval = setInterval(() => {
-        angle += 0.03;
-        Plotly.relayout(container, {
-            'scene.camera.eye': {
-                x: 1.6 * Math.cos(angle),
-                y: 1.6 * Math.sin(angle),
-                z: 0.6
-            }
-        });
-    }, 50);
 }
 
 function playRacingAnimation() {

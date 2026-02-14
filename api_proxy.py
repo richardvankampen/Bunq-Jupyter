@@ -340,27 +340,64 @@ def discover_payment_endpoints():
 
     return discovered
 
-def _call_payment_list(payment_endpoint, account_id, mode):
+def _call_payment_list(payment_endpoint, account_id, mode, params=None):
+    query_params = params or {}
     if mode == 'kw_monetary_account_id':
         return payment_endpoint.list(monetary_account_id=account_id)
+    if mode == 'kw_monetary_account_id_params':
+        return payment_endpoint.list(monetary_account_id=account_id, params=query_params)
     if mode == 'kw_account_id':
         return payment_endpoint.list(account_id=account_id)
+    if mode == 'kw_account_id_params':
+        return payment_endpoint.list(account_id=account_id, params=query_params)
     if mode == 'kw_monetary_account_bank_id':
         return payment_endpoint.list(monetary_account_bank_id=account_id)
+    if mode == 'kw_monetary_account_bank_id_params':
+        return payment_endpoint.list(monetary_account_bank_id=account_id, params=query_params)
     if mode == 'positional':
         return payment_endpoint.list(account_id)
+    if mode == 'positional_with_count':
+        return payment_endpoint.list(account_id, {'count': query_params.get('count')})
     if mode == 'positional_with_params':
-        return payment_endpoint.list(account_id, {})
+        return payment_endpoint.list(account_id, query_params)
     raise RuntimeError(f"Unknown payment list mode: {mode}")
 
-def list_payments_for_account(account_id):
+def _extract_payment_created_datetime(payment):
+    created_raw = get_obj_field(payment, 'created', 'created_at', 'date')
+    if not created_raw:
+        return None
+    return parse_bunq_datetime(created_raw, context='payment paging created')
+
+def _extract_payment_numeric_id(payment):
+    payment_id = get_obj_field(payment, 'id_', 'id')
+    if payment_id is None:
+        return None
+    try:
+        return int(payment_id)
+    except (TypeError, ValueError):
+        return None
+
+def list_payments_for_account(account_id, cutoff_date=None):
     """List payments for one monetary account across bunq-sdk variants."""
     global _PAYMENT_ENDPOINT, _PAYMENT_LIST_MODE
 
+    page_size = get_int_env('BUNQ_PAYMENT_PAGE_SIZE', 200)
+    if page_size < 1:
+        page_size = 200
+    if page_size > 200:
+        page_size = 200
+    max_pages = get_int_env('BUNQ_PAYMENT_MAX_PAGES', 50)
+    if max_pages < 1:
+        max_pages = 50
+
     modes = (
+        'kw_monetary_account_id_params',
         'kw_monetary_account_id',
+        'kw_account_id_params',
         'kw_account_id',
+        'kw_monetary_account_bank_id_params',
         'kw_monetary_account_bank_id',
+        'positional_with_count',
         'positional',
         'positional_with_params',
     )
@@ -385,18 +422,62 @@ def list_payments_for_account(account_id):
     last_exc = None
     for name, payment_endpoint, candidate_modes in candidates:
         for mode in candidate_modes:
+            older_id = None
+            collected = []
+            seen_payment_ids = set()
+
             try:
-                result = _call_payment_list(payment_endpoint, account_id, mode)
-                payments = getattr(result, 'value', result)
-                if payments is None:
-                    payments = []
-                if not isinstance(payments, list):
-                    payments = list(payments)
+                for _ in range(max_pages):
+                    query_params = {'count': page_size}
+                    if older_id is not None:
+                        query_params['older_id'] = older_id
+
+                    result = _call_payment_list(payment_endpoint, account_id, mode, params=query_params)
+                    payments = getattr(result, 'value', result)
+                    if payments is None:
+                        payments = []
+                    if not isinstance(payments, list):
+                        payments = list(payments)
+                    if not payments:
+                        break
+
+                    oldest_payment_id = None
+                    oldest_payment_created = None
+
+                    for payment in payments:
+                        payment_id_raw = get_obj_field(payment, 'id_', 'id')
+                        dedupe_key = str(payment_id_raw) if payment_id_raw is not None else f"obj:{id(payment)}"
+                        if dedupe_key in seen_payment_ids:
+                            continue
+                        seen_payment_ids.add(dedupe_key)
+                        collected.append(payment)
+
+                        payment_id = _extract_payment_numeric_id(payment)
+                        if payment_id is not None:
+                            if oldest_payment_id is None or payment_id < oldest_payment_id:
+                                oldest_payment_id = payment_id
+
+                        created_at = _extract_payment_created_datetime(payment)
+                        if created_at is not None:
+                            if oldest_payment_created is None or created_at < oldest_payment_created:
+                                oldest_payment_created = created_at
+
+                    if cutoff_date and oldest_payment_created and oldest_payment_created < cutoff_date:
+                        break
+
+                    if len(payments) < page_size:
+                        break
+                    if oldest_payment_id is None:
+                        break
+                    if older_id is not None and oldest_payment_id == older_id:
+                        break
+                    older_id = oldest_payment_id
+
                 if _PAYMENT_ENDPOINT is not payment_endpoint or _PAYMENT_LIST_MODE != mode:
                     logger.info(f"Using bunq payment endpoint: {name} ({mode})")
                 _PAYMENT_ENDPOINT = payment_endpoint
                 _PAYMENT_LIST_MODE = mode
-                return payments
+                return collected
             except TypeError as exc:
                 last_exc = exc
                 continue
@@ -2773,7 +2854,7 @@ def get_transactions():
 
 def get_account_transactions(account_id, cutoff_date=None, sort_desc=True, own_ibans=None, account_name=None):
     """Get transactions for specific account"""
-    payments = list_payments_for_account(account_id)
+    payments = list_payments_for_account(account_id, cutoff_date=cutoff_date)
     transactions = []
     own_ibans = own_ibans or set()
     
