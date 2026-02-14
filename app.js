@@ -932,10 +932,14 @@ function getCategoryColor(category) {
         'Vervoer': '#ec4899',
         'Wonen': '#ef4444',
         'Utilities': '#f59e0b',
+        'Verzekering': '#a855f7',
+        'Belastingen': '#f97316',
         'Shopping': '#10b981',
         'Entertainment': '#06b6d4',
         'Zorg': '#6366f1',
         'Salaris': '#22c55e',
+        'Refund': '#14b8a6',
+        'Rente': '#0ea5e9',
         'Internal Transfer': '#94a3b8',
         'Overig': '#6b7280'
     };
@@ -2089,6 +2093,51 @@ function showTransactionDetail(detailType) {
         return;
     }
 
+    if (detailType === 'recurring-costs') {
+        const recurring = summarizeRecurringCosts(transactions, 20);
+        if (!recurring.rows.length) {
+            openDetailModal({
+                title: '<i class="fas fa-repeat"></i> Recurring costs',
+                summary: 'Onvoldoende terugkerende uitgaven gevonden in de geselecteerde periode.',
+                rows: [{ label: 'Geen terugkerende merchant-patronen gevonden.', value: '' }],
+                chart: null
+            });
+            return;
+        }
+
+        const chartRows = recurring.rows.slice(0, 12).reverse();
+        const trace = {
+            type: 'bar',
+            orientation: 'h',
+            x: chartRows.map((row) => row.avgMonthly),
+            y: chartRows.map((row) => row.merchant),
+            marker: { color: 'rgba(168,85,247,0.82)' },
+            text: chartRows.map((row) => `${row.monthsPresent} mnd`),
+            textposition: 'outside',
+            hovertemplate: '%{y}<br>Gem. per maand: %{x:.2f} EUR<extra></extra>'
+        };
+        const layout = {
+            margin: { t: 10, r: 44, l: 180, b: 30 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#cbd5f5' },
+            xaxis: { gridcolor: 'rgba(255,255,255,0.08)', title: 'Gemiddelde maandlast (EUR)' },
+            yaxis: { automargin: true }
+        };
+
+        const monthlyTotal = recurring.rows.reduce((sum, row) => sum + row.avgMonthly, 0);
+        openDetailModal({
+            title: '<i class="fas fa-repeat"></i> Recurring costs',
+            summary: `${recurring.rows.length} terugkerende merchants · geschatte maandlast ${formatCurrency(monthlyTotal)}.`,
+            rows: recurring.rows.map((row) => ({
+                label: `${row.merchant} · ${row.monthsPresent}/${recurring.months} maanden`,
+                value: `${formatCurrency(row.avgMonthly)}/mnd (stabiliteit ${(Math.max(0, 1 - row.stability) * 100).toFixed(0)}%)`
+            })),
+            chart: { trace, layout }
+        });
+        return;
+    }
+
     openDetailModal({
         title: '<i class="fas fa-info-circle"></i> Detail',
         summary: 'Geen detailweergave beschikbaar voor dit onderdeel.',
@@ -2797,7 +2846,15 @@ function renderRacingChart(data) {
     updateRacingChart(racingData.months.length - 1);
 }
 
-const ESSENTIAL_CATEGORIES = new Set(['Boodschappen', 'Wonen', 'Utilities', 'Vervoer', 'Zorg']);
+const ESSENTIAL_CATEGORIES = new Set([
+    'Boodschappen',
+    'Wonen',
+    'Utilities',
+    'Verzekering',
+    'Belastingen',
+    'Vervoer',
+    'Zorg'
+]);
 
 function isEssentialCategory(category) {
     return ESSENTIAL_CATEGORIES.has(category || 'Overig');
@@ -2935,41 +2992,128 @@ function summarizeNeedsVsWants(transactions) {
     return summary;
 }
 
+function computeDailyExpenseVolatility(transactions) {
+    const daily = buildDailyTotals(transactions || []);
+    const values = daily.map((day) => Number(day.expenses) || 0);
+    if (!values.length) {
+        return { mean: 0, std: 0, cv: 0, label: 'N/A' };
+    }
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    if (mean <= 0.01) {
+        return { mean, std: 0, cv: 0, label: 'Laag' };
+    }
+    const variance = values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / values.length;
+    const std = Math.sqrt(Math.max(variance, 0));
+    const cv = std / mean;
+    const label = cv >= 0.9 ? 'Hoog' : (cv >= 0.55 ? 'Middel' : 'Laag');
+    return { mean, std, cv, label };
+}
+
+function summarizeRecurringCosts(transactions, maxItems = 12) {
+    const expenseTransactions = (transactions || []).filter((transaction) => (
+        (transaction.amount || 0) < 0
+        && transaction.date instanceof Date
+        && !Number.isNaN(transaction.date.getTime())
+    ));
+    if (!expenseTransactions.length) {
+        return { months: 0, rows: [] };
+    }
+
+    const monthKeys = new Set();
+    const merchantByMonth = new Map();
+    expenseTransactions.forEach((transaction) => {
+        const monthKey = `${transaction.date.getFullYear()}-${String(transaction.date.getMonth() + 1).padStart(2, '0')}`;
+        const merchant = resolveMerchantLabel(transaction);
+        const amount = Math.abs(Number(transaction.amount) || 0);
+        monthKeys.add(monthKey);
+        if (!merchantByMonth.has(merchant)) {
+            merchantByMonth.set(merchant, new Map());
+        }
+        const monthMap = merchantByMonth.get(merchant);
+        monthMap.set(monthKey, (monthMap.get(monthKey) || 0) + amount);
+    });
+
+    const totalMonths = monthKeys.size;
+    const minMonths = totalMonths >= 4 ? 3 : 2;
+    const rows = [];
+
+    merchantByMonth.forEach((monthMap, merchant) => {
+        const monthsPresent = monthMap.size;
+        if (monthsPresent < minMonths) return;
+
+        const monthlyValues = Array.from(monthMap.values());
+        const avgMonthly = monthlyValues.reduce((sum, value) => sum + value, 0) / monthlyValues.length;
+        if (avgMonthly < 7.5) return;
+
+        const variance = monthlyValues.reduce((sum, value) => sum + ((value - avgMonthly) ** 2), 0) / monthlyValues.length;
+        const std = Math.sqrt(Math.max(variance, 0));
+        const cv = avgMonthly > 0.01 ? std / avgMonthly : 0;
+        rows.push({
+            merchant,
+            monthsPresent,
+            avgMonthly,
+            totalObserved: monthlyValues.reduce((sum, value) => sum + value, 0),
+            stability: cv
+        });
+    });
+
+    rows.sort((a, b) => b.avgMonthly - a.avgMonthly);
+    return {
+        months: totalMonths,
+        rows: rows.slice(0, maxItems)
+    };
+}
+
 function buildActionPlan(transactions, kpis, liquidBalance = null, dailyBurn = 0) {
     const actions = [];
     const monthly = summarizeMonthlyBudgetDiscipline(transactions, 6);
     const latest = monthly[monthly.length - 1] || null;
+    const baselineMonths = monthly.slice(-3);
+    const baseline = baselineMonths.length
+        ? baselineMonths.reduce((agg, row) => ({
+            income: agg.income + row.income,
+            essentials: agg.essentials + row.essentials,
+            discretionary: agg.discretionary + row.discretionary,
+            netSavings: agg.netSavings + row.netSavings
+        }), { income: 0, essentials: 0, discretionary: 0, netSavings: 0 })
+        : null;
 
-    if (latest && latest.income > 0.01) {
-        const savingsTarget = latest.income * 0.2;
-        const savingsGap = savingsTarget - latest.netSavings;
-        if (savingsGap > 1) {
+    if (baseline && baseline.income > 0.01) {
+        const scale = 1 / baselineMonths.length;
+        const avgIncome = baseline.income * scale;
+        const avgEssentials = baseline.essentials * scale;
+        const avgDiscretionary = baseline.discretionary * scale;
+        const avgNetSavings = baseline.netSavings * scale;
+
+        const savingsTarget = avgIncome * 0.2;
+        const savingsGap = savingsTarget - avgNetSavings;
+        if (savingsGap > 25) {
             actions.push({
                 priority: 1,
                 title: 'Verhoog netto sparen richting 20%',
-                summary: `Gap t.o.v. 20%-target: ${formatCurrency(savingsGap)} in ${latest.monthLabel}.`,
+                summary: `Gemiddeld tekort t.o.v. 20%-target: ${formatCurrency(savingsGap)} per maand.`,
                 impact: savingsGap
             });
         }
 
-        const discretionaryTarget = latest.income * 0.3;
-        const discretionaryGap = latest.discretionary - discretionaryTarget;
-        if (discretionaryGap > 1) {
+        const discretionaryTarget = avgIncome * 0.3;
+        const discretionaryGap = avgDiscretionary - discretionaryTarget;
+        if (discretionaryGap > 25) {
             actions.push({
                 priority: 1,
                 title: 'Verlaag discretionary uitgaven',
-                summary: `Discretionary ${latest.discretionaryPct.toFixed(1)}% vs 30% target (${formatCurrency(discretionaryGap)} boven target).`,
+                summary: `Gemiddeld discretionary ${formatCurrency(avgDiscretionary)} vs target ${formatCurrency(discretionaryTarget)}.`,
                 impact: discretionaryGap
             });
         }
 
-        const essentialTarget = latest.income * 0.5;
-        const essentialGap = latest.essentials - essentialTarget;
-        if (essentialGap > 1) {
+        const essentialTarget = avgIncome * 0.5;
+        const essentialGap = avgEssentials - essentialTarget;
+        if (essentialGap > 35) {
             actions.push({
                 priority: 2,
                 title: 'Herzie vaste lasten / essentials',
-                summary: `Essentials ${latest.essentialsPct.toFixed(1)}% vs 50% target (${formatCurrency(essentialGap)} boven target).`,
+                summary: `Gemiddeld essentials ${formatCurrency(avgEssentials)} vs target ${formatCurrency(essentialTarget)}.`,
                 impact: essentialGap
             });
         }
@@ -2984,11 +3128,11 @@ function buildActionPlan(transactions, kpis, liquidBalance = null, dailyBurn = 0
         .reduce((sum, transaction) => sum + Math.abs(transaction.amount || 0), 0);
     if (priorExpenses > 0.01) {
         const increasePct = ((recentExpenses - priorExpenses) / priorExpenses) * 100;
-        if (increasePct > 10) {
+        if (increasePct > 10 && (recentExpenses - priorExpenses) > 35) {
             actions.push({
                 priority: 2,
                 title: 'Stop uitgavengroei',
-                summary: `Uitgaven stegen ${increasePct.toFixed(1)}% in laatste 30 dagen.`,
+                summary: `Uitgaven stegen ${increasePct.toFixed(1)}% in laatste 30 dagen (${formatCurrency(recentExpenses - priorExpenses)}).`,
                 impact: Math.max(recentExpenses - priorExpenses, 0)
             });
         }
@@ -3007,10 +3151,31 @@ function buildActionPlan(transactions, kpis, liquidBalance = null, dailyBurn = 0
             actions.push({
                 priority: 3,
                 title: 'Verlaag merchant-concentratie',
-                summary: `${topMerchant[0]} is ${share.toFixed(1)}% van alle uitgaven.`,
-                impact: topMerchant[1] * 0.1
+                summary: `${topMerchant[0]} is ${share.toFixed(1)}% van alle uitgaven (${formatCurrency(topMerchant[1])}).`,
+                impact: topMerchant[1] * 0.08
             });
         }
+    }
+
+    const recurring = summarizeRecurringCosts(transactions);
+    const recurringTop = recurring.rows[0];
+    if (recurringTop && recurringTop.avgMonthly > 40) {
+        actions.push({
+            priority: 2,
+            title: 'Optimaliseer terugkerende kosten',
+            summary: `${recurringTop.merchant} gemiddeld ${formatCurrency(recurringTop.avgMonthly)}/mnd over ${recurringTop.monthsPresent} maanden.`,
+            impact: recurringTop.avgMonthly * 0.12
+        });
+    }
+
+    const volatility = computeDailyExpenseVolatility(transactions);
+    if (volatility.cv > 0.9 && volatility.mean > 20) {
+        actions.push({
+            priority: 3,
+            title: 'Verminder uitgavenvolatiliteit',
+            summary: `Dagelijkse uitgavenvolatiliteit is hoog (${(volatility.cv * 100).toFixed(0)}% van het gemiddelde).`,
+            impact: volatility.mean * 0.08
+        });
     }
 
     if (liquidBalance !== null && dailyBurn > 0.01) {
@@ -3027,6 +3192,15 @@ function buildActionPlan(transactions, kpis, liquidBalance = null, dailyBurn = 0
         }
     }
 
+    if (latest && latest.income > 0.01 && latest.savingsPct < 0) {
+        actions.push({
+            priority: 1,
+            title: 'Herstel negatieve maandelijkse besparing',
+            summary: `Laatste maand is netto negatief (${latest.savingsPct.toFixed(1)}%).`,
+            impact: Math.abs(latest.netSavings)
+        });
+    }
+
     if (!actions.length) {
         actions.push({
             priority: 3,
@@ -3036,21 +3210,31 @@ function buildActionPlan(transactions, kpis, liquidBalance = null, dailyBurn = 0
         });
     }
 
-    return actions.sort((a, b) => {
+    const deduped = [];
+    const seenTitles = new Set();
+    actions.forEach((action) => {
+        if (seenTitles.has(action.title)) return;
+        seenTitles.add(action.title);
+        deduped.push(action);
+    });
+
+    return deduped.sort((a, b) => {
         if (a.priority !== b.priority) return a.priority - b.priority;
         return (Number(b.impact) || 0) - (Number(a.impact) || 0);
-    });
+    }).slice(0, 8);
 }
 
 function renderInsights(data, kpis) {
     const biggestCategory = document.getElementById('biggestCategory');
     const avgDaily = document.getElementById('avgDaily');
+    const spendVolatility = document.getElementById('spendVolatility');
     const expensiveDay = document.getElementById('expensiveDay');
     const trendInsight = document.getElementById('trendInsight');
     const liquidityRunway = document.getElementById('liquidityRunway');
     const needsVsWants = document.getElementById('needsVsWants');
     const budgetRuleFit = document.getElementById('budgetRuleFit');
     const topMerchantShare = document.getElementById('topMerchantShare');
+    const recurringCosts = document.getElementById('recurringCosts');
     const nextBestAction = document.getElementById('nextBestAction');
     const projectedMonthNet = document.getElementById('projectedMonthNet');
 
@@ -3063,6 +3247,12 @@ function renderInsights(data, kpis) {
     const daily = buildDailyTotals(data);
     const avg = daily.length ? daily.reduce((sum, day) => sum + day.expenses, 0) / daily.length : 0;
     if (avgDaily) avgDaily.textContent = formatCurrency(avg);
+    const volatility = computeDailyExpenseVolatility(data);
+    if (spendVolatility) {
+        spendVolatility.textContent = volatility.label === 'N/A'
+            ? 'N/A'
+            : `${volatility.label} (${(volatility.cv * 100).toFixed(0)}%)`;
+    }
 
     const expensive = [...daily].sort((a, b) => b.expenses - a.expenses)[0];
     if (expensiveDay) {
@@ -3138,6 +3328,16 @@ function renderInsights(data, kpis) {
             const [merchantName, merchantTotal] = merchantsSorted[0];
             const share = (merchantTotal / kpis.expenses) * 100;
             topMerchantShare.textContent = `${merchantName} (${share.toFixed(1)}%)`;
+        }
+    }
+
+    const recurring = summarizeRecurringCosts(data);
+    if (recurringCosts) {
+        if (!recurring.rows.length) {
+            recurringCosts.textContent = 'N/A';
+        } else {
+            const recurringMonthly = recurring.rows.reduce((sum, row) => sum + row.avgMonthly, 0);
+            recurringCosts.textContent = `${formatCurrency(recurringMonthly)}/mnd`;
         }
     }
 

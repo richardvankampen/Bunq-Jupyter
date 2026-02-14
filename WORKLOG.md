@@ -91,3 +91,39 @@ Dit bestand houdt een compacte voortgangshistorie bij, zodat chatcontextverlies 
 ### Relevante commit
 
 - `fc30a08` Fix balance/merchant analytics and dashboard interaction issues
+
+### Aanvullend opgeleverd (P1 - actionable visualisaties)
+
+- Bunq transactiepaginatie robuuster gemaakt in backend:
+  - `api_proxy.py` gebruikt nu expliciet `count` en `older_id` voor payment-lijsten.
+  - paging stopt slim op `cutoff_date`, met deduplicatie en veilige fallback over SDK-varianten.
+  - nieuwe env-tuning: `BUNQ_PAYMENT_PAGE_SIZE` (max 200) en `BUNQ_PAYMENT_MAX_PAGES`.
+- Dashboardvisualisaties meer coachend en actiegericht gemaakt:
+  - `3D Time-Space Journey` vervangen door `Budget Discipline (50/30/20)`.
+  - nieuwe budgetdetail-modal met maandvergelijkingen (needs/wants/savings + income/net).
+  - Sankey herschikt naar `Cash In -> Essentials/Discretionary -> categorieën + Net Saved/Buffer`.
+  - Sunburst uitgebreid met `overig`-aggregatie op categorie- en merchantniveau zodat minder data wegvalt.
+- Insights uitgebreid met direct bruikbare sturing:
+  - nieuwe kaarten `50/30/20 Fit` en `Next Best Action`.
+  - nieuwe detailweergave `Action plan` met geprioriteerde acties en geschatte impact.
+
+### Relevante commit
+
+- `8d6fb66` Improve bunq pagination and actionable budgeting views
+
+### Aanvullende P1 verfijning (metrics + edge-cases)
+
+- Insights verder verdiept:
+  - `Spend Volatility` toegevoegd (coëfficiënt van variatie op dagelijkse uitgaven).
+  - `Recurring Costs` toegevoegd met geschatte maandlast op basis van terugkerende merchants.
+  - `Next Best Action` verfijnd met meer business rules en impactdrempels.
+- Nieuwe deep-dive:
+  - `Recurring costs` detailmodal met prioritering op gemiddelde maandlast en stabiliteit.
+- Action-plan tuning:
+  - baseline op meerdere maanden i.p.v. één maand.
+  - extra regels voor recurring spend, volatiliteit en negatieve savings-maand.
+  - deduplicatie en beperking op aantal acties om ruis te reduceren.
+- Backend edge-cases verbeterd:
+  - accounttype-classificatie gebruikt nu expliciete typevelden (`monetary_account_type`, profile/setting type).
+  - categorie-indeling uitgebreid met `Verzekering`, `Belastingen`, `Refund`, `Rente`.
+  - MCC-mapping en keywordregels aangescherpt; categorisatie ontvangt nu ook transactie-`amount`.

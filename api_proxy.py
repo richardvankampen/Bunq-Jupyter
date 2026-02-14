@@ -1578,14 +1578,20 @@ def extract_own_ibans(accounts):
                 ibans.add(alias_iban)
     return ibans
 
+def _normalize_account_type_text(value):
+    if value is None:
+        return ''
+    return str(value).strip().lower()
+
 def classify_account_type(account):
     """
     Coarse account classification for dashboard grouping.
     Returns one of: checking, savings, investment.
     """
-    class_name = account.__class__.__name__.lower()
-    description = (get_obj_field(account, 'description', 'display_name', default='') or '').lower()
+    class_name = _normalize_account_type_text(account.__class__.__name__)
+    description = _normalize_account_type_text(get_obj_field(account, 'description', 'display_name', default=''))
     profile = get_obj_field(account, 'monetary_account_profile')
+    setting = get_obj_field(account, 'monetary_account_setting', 'setting')
     subtype = (
         get_obj_field(
             account,
@@ -1594,9 +1600,10 @@ def classify_account_type(account):
             'type_',
             'type',
             'monetary_account_type',
+            'account_type',
             default=''
         ) or ''
-    ).lower()
+    )
     profile_type = (
         get_obj_field(
             profile,
@@ -1607,8 +1614,35 @@ def classify_account_type(account):
             'account_type',
             default=''
         ) or ''
-    ).lower()
-    fingerprint = f"{class_name} {description} {subtype} {profile_type}"
+    )
+    setting_type = (
+        get_obj_field(
+            setting,
+            'sub_type',
+            'type_',
+            'type',
+            'account_type',
+            default=''
+        ) or ''
+    )
+
+    explicit_type_fields = [
+        subtype,
+        profile_type,
+        setting_type,
+        get_obj_field(account, 'monetary_account_type', default=''),
+        get_obj_field(account, 'account_type', default=''),
+    ]
+    explicit_type_text = " ".join(_normalize_account_type_text(field) for field in explicit_type_fields if field)
+    fingerprint = f"{class_name} {description} {explicit_type_text}"
+
+    # Hard signals based on official type-like fields
+    if any(token in explicit_type_text for token in ('investment', 'stock', 'share', 'crypto', 'belegging')):
+        return 'investment'
+    if any(token in explicit_type_text for token in ('saving', 'savings', 'spaar', 'reserve', 'goal')):
+        return 'savings'
+    if any(token in explicit_type_text for token in ('checking', 'payment', 'bank', 'card', 'current')):
+        return 'checking'
 
     if any(token in fingerprint for token in (
         'savings', 'spaar', 'spaarrekening', 'sparen',
@@ -2895,7 +2929,8 @@ def get_account_transactions(account_id, cutoff_date=None, sort_desc=True, own_i
             description,
             counterparty_name,
             is_internal_transfer,
-            merchant_category_code=merchant_category_code
+            merchant_category_code=merchant_category_code,
+            amount=amount_value
         )
         merchant_candidates = [counterparty_name, description, merchant_reference]
         merchant_label = next(
@@ -2929,7 +2964,7 @@ def get_account_transactions(account_id, cutoff_date=None, sort_desc=True, own_i
     
     return transactions
 
-def categorize_transaction(description, counterparty_name, is_internal=False, merchant_category_code=None):
+def categorize_transaction(description, counterparty_name, is_internal=False, merchant_category_code=None, amount=None):
     """Rule-based categorization with MCC fallback."""
     if is_internal:
         return 'Internal Transfer'
@@ -2937,6 +2972,10 @@ def categorize_transaction(description, counterparty_name, is_internal=False, me
     desc_lower = description.lower() if description else ''
     counter_lower = counterparty_name.lower() if counterparty_name else ''
     combined = f"{desc_lower} {counter_lower}".strip()
+    try:
+        amount_value = 0.0 if amount is None else float(amount)
+    except (TypeError, ValueError):
+        amount_value = 0.0
 
     mcc = str(merchant_category_code or '').strip()
     if mcc:
@@ -2948,12 +2987,24 @@ def categorize_transaction(description, counterparty_name, is_internal=False, me
             return 'Vervoer'
         if mcc in {'4900', '4814'}:
             return 'Utilities'
+        if mcc in {'5960', '5966', '6300'}:
+            return 'Verzekering'
+        if mcc in {'9211', '9311', '9399'}:
+            return 'Belastingen'
         if mcc in {'5912', '8011', '8021', '8099'}:
             return 'Zorg'
         if mcc in {'7832', '7922', '7997', '7999'}:
             return 'Entertainment'
         if mcc in {'5311', '5331', '5399', '5651', '5732'}:
             return 'Shopping'
+
+    if amount_value > 0:
+        if any(word in combined for word in ['refund', 'terugbetaling', 'chargeback', 'retour', 'reversal']):
+            return 'Refund'
+        if any(word in combined for word in ['rente', 'interest']):
+            return 'Rente'
+        if any(word in combined for word in ['salaris', 'salary', 'loon', 'wage']):
+            return 'Salaris'
 
     if any(word in combined for word in [
         'albert heijn', ' ah ', 'jumbo', 'lidl', 'aldi', 'plus', 'dirk',
@@ -2972,6 +3023,10 @@ def categorize_transaction(description, counterparty_name, is_internal=False, me
         return 'Vervoer'
     elif any(word in combined for word in ['huur', 'rent', 'hypotheek', 'mortgage', 'vve']):
         return 'Wonen'
+    elif any(word in combined for word in ['verzekering', 'insur', 'aegon', 'allianz', 'ohra', 'unive', 'zilveren kruis']):
+        return 'Verzekering'
+    elif any(word in combined for word in ['belasting', 'belastingdienst', 'tax', 'gemeente', 'waterschap']):
+        return 'Belastingen'
     elif any(word in combined for word in ['eneco', 'essent', 'energie', 'gas', 'water', 'ziggo', 'kpn', 'telecom']):
         return 'Utilities'
     elif any(word in combined for word in ['bol.com', 'coolblue', 'mediamarkt', 'amazon', 'zara', 'h&m', 'shop']):

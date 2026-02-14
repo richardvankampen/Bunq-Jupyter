@@ -1,39 +1,48 @@
 # Context Handover
 
-Laatste update: 2026-02-14 (late)
+Laatste update: 2026-02-14 (P1 actionable update)
 
 ## Waar we staan
 
 - Vaultwarden-first setup blijft de voorkeursroute (`USE_VAULTWARDEN=true`).
 - Dashboard draait via Synology + Docker Swarm.
 - Recente fixes zijn gepusht op `main`:
+  - `8d6fb66`: bunq pagination + actionable budgeting visualisaties
   - `fc30a08`: balance/merchant analytics + UI/visualisatie fixes
   - `8c8a69e`: worklog update
   - `c690891`: persistent context handover bestand
 
 ## Wat net is aangepast (samenvatting)
 
-- Savings/account classificatie verbeterd (incl. extra trefwoorden).
-- EUR-conversie van rekeningen verbetert door eerst Bunq `balance_converted` te gebruiken.
-- Merchant/category datakwaliteit verbeterd (fallbacks + MCC-regels).
-- KPI mini-charts tonen nu assen.
-- Balans-modals zijn breder en viewport-safe.
-- Balans-detail lijst is alfabetisch.
-- Cashflow download-knop werkt.
-- Day Pattern is vereenvoudigd naar duidelijke dagdelen.
-- Sunburst/Top Merchants/Category Race tonen meer data.
-- Nieuwe gerichte fix (nog te deployen op NAS):
-  - spaarrekening-classificatie robuuster (incl. endpoint-hints), zodat savings totaal beter klopt;
-  - merchantlabels filteren opaque codes (zoals `JNQ...`) en prefereren leesbare namen;
-  - Category Breakdown/Sunburst tekst geforceerd wit.
+- Backend:
+  - payment-list paginatie aangescherpt met `count` + `older_id` (SDK-compatibel).
+  - cutoff-aware paging + deduplicatie toegevoegd voor stabielere transactielijsten.
+  - paging tuning via `BUNQ_PAYMENT_PAGE_SIZE` en `BUNQ_PAYMENT_MAX_PAGES`.
+- Frontend visualisaties:
+  - `3D Time-Space Journey` vervangen door `Budget Discipline (50/30/20)`.
+  - nieuwe budget-coach detailmodal (maandelijkse needs/wants/savings + targets).
+  - Sankey informatiever gemaakt: income split naar essentials/discretionary + net saved/buffer.
+  - Sunburst bevat nu `overig`-aggregatie (minder missende categorieën/winkels).
+- Insights:
+  - nieuwe KPI-kaart `50/30/20 Fit`.
+  - nieuwe KPI-kaart `Next Best Action`.
+  - nieuwe detailmodal `Action plan` met prioriteit + impactinschatting.
+- Verdieping/finetuning daarna:
+  - nieuwe KPI `Spend Volatility`.
+  - nieuwe KPI `Recurring Costs` + detailmodal.
+  - action-plan regels uitgebreid (multi-maand baseline, recurring costs, volatiliteit, negatieve savings).
+  - accounttype/categorisatie edge-cases verbeterd (`monetary_account_type` signalen, extra MCC/keyword categorieën).
 
 ## Belangrijk voor volgende sessie
 
-- Open punt: valideren op echte data op NAS:
-  - spaarrekeningen nu correct totaal tonen (EUR + ZAR),
-  - merchantnamen tonen i.p.v. codes (`JNQ...`),
-  - Category Breakdown tekst overal wit en leesbaar.
-- Daarna doorgaan met volgende P1-substap op visualisaties (na jouw feedback).
+- Eerst valideren op echte NAS-data:
+  - transaction paging performance en volledigheid (`/api/transactions` over langere periodes),
+  - 50/30/20 grafiek en Action Plan op echte categoriepatronen,
+  - Sunburst/Sankey leesbaarheid en informatiedichtheid.
+- Daarna volgende P1-substap:
+  - finetunen op echte gebruikersdata (drempels per categorie/merchant),
+  - checken of nieuwe categorieën (`Verzekering`, `Belastingen`, `Refund`, `Rente`) goed landen in visualisaties,
+  - eventuele extra deep-dives voor budgetcoach use-cases.
 
 ## Handige update/deploy flow op NAS
 
