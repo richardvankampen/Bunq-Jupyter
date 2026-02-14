@@ -16,9 +16,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Pin Bitwarden CLI release (native binary)
 ARG BW_VERSION=2026.1.0
-# Optional manual pin override (recommended for fully reproducible builds):
-# ARG BW_SHA256=<exact hash for bw-linux-${BW_VERSION}.zip>
-ARG BW_SHA256=
+# Pinned checksum for bw-linux-${BW_VERSION}.zip.
+# If you override BW_VERSION, also override BW_SHA256.
+ARG BW_SHA256=1d7b44c94b17a0a6c1264ba529f94b8b50fe059ab08d20aa5a5cbfdd25084aab
 ARG BW_NPM_VERSION=2026.1.0
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -30,16 +30,11 @@ RUN apt-get update && DEBIAN_FRONTEND=${DEBIAN_FRONTEND} apt-get install -y \
        ca-certificates \
     && ARCH="$(dpkg --print-architecture)" \
     && install_bw_native() { \
-         ZIP_NAME="$1"; \
-         SHA_FILE="$2"; \
          BASE_URL="https://github.com/bitwarden/clients/releases/download/cli-v${BW_VERSION}"; \
+         ZIP_NAME="bw-linux-${BW_VERSION}.zip"; \
+         test -n "${BW_SHA256}" || return 1; \
          curl -fsSL -o /tmp/bw.zip "${BASE_URL}/${ZIP_NAME}" || return 1; \
-         EXPECTED_SHA="${BW_SHA256}"; \
-         if [ -z "${EXPECTED_SHA}" ]; then \
-           EXPECTED_SHA="$(curl -fsSL "${BASE_URL}/${SHA_FILE}" 2>/dev/null | awk '$2 ~ /bw(-oss)?-linux-.*\\.zip$/ { print $1; exit }' || true)"; \
-         fi; \
-         test -n "${EXPECTED_SHA}" || return 1; \
-         echo "${EXPECTED_SHA}  /tmp/bw.zip" | sha256sum -c - >/dev/null; \
+         echo "${BW_SHA256}  /tmp/bw.zip" | sha256sum -c - >/dev/null; \
          unzip -q /tmp/bw.zip -d /tmp; \
          install -m 0755 /tmp/bw /usr/local/bin/bw; \
          rm -f /tmp/bw.zip /tmp/bw; \
@@ -51,12 +46,10 @@ RUN apt-get update && DEBIAN_FRONTEND=${DEBIAN_FRONTEND} apt-get install -y \
          npm cache clean --force; \
        } \
     && if [ "${ARCH}" = "amd64" ]; then \
-         if install_bw_native "bw-linux-${BW_VERSION}.zip" "bw-linux-sha256-${BW_VERSION}.txt"; then \
+         if install_bw_native; then \
            echo "Installed native Bitwarden CLI binary (${BW_VERSION})."; \
-         elif install_bw_native "bw-oss-linux-${BW_VERSION}.zip" "bw-oss-linux-sha256-${BW_VERSION}.txt"; then \
-           echo "Installed native Bitwarden OSS CLI binary (${BW_VERSION})."; \
          else \
-           echo "WARN: native Bitwarden CLI download/checksum unavailable for ${BW_VERSION}; falling back to npm." >&2; \
+           echo "WARN: native Bitwarden CLI download/checksum validation failed for ${BW_VERSION}; falling back to npm." >&2; \
            install_bw_npm; \
          fi; \
        elif [ "${ARCH}" = "arm64" ]; then \

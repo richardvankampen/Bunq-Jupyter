@@ -15,6 +15,9 @@ ENV_FILE="${ENV_FILE:-.env}"
 NETWORK_NAME="${NETWORK_NAME:-bunq-net}"
 RUN_RESTART_CHECK="${RUN_RESTART_CHECK:-true}"
 NO_CACHE="${NO_CACHE:-ask}"
+BW_VERSION="${BW_VERSION:-}"
+BW_NPM_VERSION="${BW_NPM_VERSION:-}"
+BW_SHA256="${BW_SHA256:-}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "ERROR: docker command not found"
@@ -174,10 +177,25 @@ build_and_deploy() {
 
   TAG="$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d%H%M%S)"
   say "Building image ${IMAGE_REPO}:${TAG} (no-cache=${NO_CACHE_NORMALIZED}) ..."
+  BUILD_ARGS=""
+  if [ -n "${BW_VERSION}" ]; then
+    BUILD_ARGS="${BUILD_ARGS} --build-arg BW_VERSION=${BW_VERSION}"
+  fi
+  if [ -n "${BW_NPM_VERSION}" ]; then
+    BUILD_ARGS="${BUILD_ARGS} --build-arg BW_NPM_VERSION=${BW_NPM_VERSION}"
+  fi
+  if [ -n "${BW_SHA256}" ]; then
+    BUILD_ARGS="${BUILD_ARGS} --build-arg BW_SHA256=${BW_SHA256}"
+  fi
+  if [ -n "${BUILD_ARGS}" ]; then
+    say "Using custom Bitwarden build args from environment."
+  fi
   if [ "${NO_CACHE_NORMALIZED}" = "true" ]; then
-    $DOCKER_CMD build --no-cache -t "${IMAGE_REPO}:${TAG}" .
+    # shellcheck disable=SC2086
+    $DOCKER_CMD build --no-cache ${BUILD_ARGS} -t "${IMAGE_REPO}:${TAG}" .
   else
-    $DOCKER_CMD build -t "${IMAGE_REPO}:${TAG}" .
+    # shellcheck disable=SC2086
+    $DOCKER_CMD build ${BUILD_ARGS} -t "${IMAGE_REPO}:${TAG}" .
   fi
   $DOCKER_CMD tag "${IMAGE_REPO}:${TAG}" "${IMAGE_REPO}:local"
 
