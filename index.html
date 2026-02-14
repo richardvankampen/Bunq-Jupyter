@@ -253,7 +253,7 @@
             <!-- Row 2: Medium Charts -->
             <div class="viz-row two-col">
                 <!-- Sankey Diagram -->
-                <div id="moneyFlowCard" class="viz-card glass-effect" data-aos="fade-up" data-aos-delay="100">
+                <div id="moneyFlowCard" class="viz-card glass-effect clickable-viz" data-aos="fade-up" data-aos-delay="100">
                     <div class="card-header">
                         <h3><i class="fas fa-project-diagram"></i> Money Flow (Sankey)</h3>
                         <div class="card-actions">
@@ -363,7 +363,7 @@
         <!-- Insights Section -->
         <section class="insights-section">
             <div class="insights-grid">
-                <div class="insight-card glass-effect" data-aos="fade-up">
+                <div class="insight-card glass-effect clickable-insight" data-insight-detail="expense-momentum" data-aos="fade-up">
                     <i class="fas fa-lightbulb insight-icon"></i>
                     <h4>Biggest Category</h4>
                     <p id="biggestCategory">Loading...</p>
@@ -378,10 +378,30 @@
                     <h4>Most Expensive Day</h4>
                     <p id="expensiveDay">Loading...</p>
                 </div>
-                <div class="insight-card glass-effect" data-aos="fade-up" data-aos-delay="300">
+                <div class="insight-card glass-effect clickable-insight" data-insight-detail="expense-momentum" data-aos="fade-up" data-aos-delay="300">
                     <i class="fas fa-rocket insight-icon"></i>
                     <h4>Trend</h4>
                     <p id="trendInsight">Loading...</p>
+                </div>
+                <div class="insight-card glass-effect" data-aos="fade-up" data-aos-delay="400">
+                    <i class="fas fa-hourglass-half insight-icon"></i>
+                    <h4>Liquidity Runway</h4>
+                    <p id="liquidityRunway">Loading...</p>
+                </div>
+                <div class="insight-card glass-effect clickable-insight" data-insight-detail="needs-vs-wants" data-aos="fade-up" data-aos-delay="500">
+                    <i class="fas fa-scale-balanced insight-icon"></i>
+                    <h4>Needs vs Wants</h4>
+                    <p id="needsVsWants">Loading...</p>
+                </div>
+                <div class="insight-card glass-effect clickable-insight" data-insight-detail="merchant-concentration" data-aos="fade-up" data-aos-delay="600">
+                    <i class="fas fa-store insight-icon"></i>
+                    <h4>Top Merchant Share</h4>
+                    <p id="topMerchantShare">Loading...</p>
+                </div>
+                <div class="insight-card glass-effect" data-aos="fade-up" data-aos-delay="700">
+                    <i class="fas fa-chart-pie insight-icon"></i>
+                    <h4>Projected Monthly Net</h4>
+                    <p id="projectedMonthNet">Loading...</p>
                 </div>
             </div>
         </section>

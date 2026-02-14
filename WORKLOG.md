@@ -49,3 +49,23 @@ Dit bestand houdt een compacte voortgangshistorie bij, zodat chatcontextverlies 
 
 - Doorgaan met volgende P1-substap voor dashboard/functionele verbeteringen op basis van jouw feedback.
 
+## 2026-02-14
+
+### Opgeleverd
+
+- Build/install flow sneller en flexibeler gemaakt:
+  - `scripts/install_or_update_synology.sh` vraagt nu interactief naar `--no-cache`.
+  - Nieuwe override: `NO_CACHE=true|false`.
+- Dockerfile robuuster gemaakt voor Bitwarden CLI installatie:
+  - eerst native binary (main/oss),
+  - automatische npm fallback als release/checksum tijdelijk ontbreekt.
+- P1 dashboard-insights uitgebreid met advisor-achtige metrics:
+  - `Liquidity Runway`
+  - `Needs vs Wants`
+  - `Top Merchant Share`
+  - `Projected Monthly Net`
+- Nieuwe deep-dives via bestaande detailmodal:
+  - expense momentum (`30d` vs vorige `30d`)
+  - needs-vs-wants breakdown
+  - merchant concentration
+- Money Flow kaart zelf is nu ook klikbaar voor detailweergave (niet alleen via action button).

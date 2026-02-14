@@ -18,6 +18,7 @@ Read-only dashboard dat data uit de Bunq API haalt en overzichtelijk visualiseer
 - Lokale history-opslag (SQLite) voor langere-termijn inzichten
 - EUR-totalen voor niet-EUR rekeningen (met FX conversie en caching)
 - 11+ visualisaties (cashflow, trends, categorieën)
+- Actionable insight cards (runway, needs-vs-wants, merchant concentration, monthly net projection) met deep-dive details
 - Caching en pagination voor performance
 - Synology‑ready deployment
 - Admin maintenance tools in Settings (status, egress IP, Bunq context re-init, bundled maintenance run met opties)

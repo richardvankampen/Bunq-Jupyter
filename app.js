@@ -673,6 +673,21 @@ function setupEventListeners() {
         });
     });
 
+    document.querySelectorAll('.clickable-insight[data-insight-detail]').forEach((card) => {
+        card.addEventListener('click', (event) => {
+            if (event.target.closest('button')) return;
+            const detailType = card.getAttribute('data-insight-detail');
+            if (detailType) {
+                showTransactionDetail(detailType);
+            }
+        });
+    });
+
+    document.getElementById('moneyFlowCard')?.addEventListener('click', (event) => {
+        if (event.target.closest('.action-btn')) return;
+        showTransactionDetail('money-flow');
+    });
+
     document.getElementById('balanceDetailModal')?.addEventListener('click', (event) => {
         if (event.target.id === 'balanceDetailModal') {
             closeBalanceDetail();
@@ -1486,7 +1501,8 @@ function openDetailModal({ title, summary, rows, chart }) {
     `).join('');
 
     if (chart && window.Plotly) {
-        Plotly.react(chartEl, [chart.trace], chart.layout, { displayModeBar: false, responsive: true });
+        const traces = Array.isArray(chart.trace) ? chart.trace : [chart.trace];
+        Plotly.react(chartEl, traces, chart.layout, { displayModeBar: false, responsive: true });
         chartEl.style.display = 'block';
     } else if (window.Plotly) {
         Plotly.purge(chartEl);
@@ -1614,6 +1630,200 @@ function showTransactionDetail(detailType) {
         return;
     }
 
+    if (detailType === 'needs-vs-wants') {
+        const summary = summarizeNeedsVsWants(transactions);
+        const total = summary.essentialTotal + summary.discretionaryTotal;
+        if (total <= 0.01) {
+            openDetailModal({
+                title: '<i class="fas fa-scale-balanced"></i> Needs vs Wants',
+                summary: 'Geen uitgaven gevonden in de geselecteerde periode.',
+                rows: [{ label: 'Geen uitgaven om te analyseren.', value: '' }],
+                chart: null
+            });
+            return;
+        }
+
+        const topEssential = Object.entries(summary.essentialByCategory)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4);
+        const topDiscretionary = Object.entries(summary.discretionaryByCategory)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4);
+
+        const rows = [
+            {
+                label: 'Essentials totaal',
+                value: `${formatCurrency(summary.essentialTotal)} (${((summary.essentialTotal / total) * 100).toFixed(1)}%)`
+            },
+            ...topEssential.map(([category, amount]) => ({
+                label: `Essentials · ${category}`,
+                value: formatCurrency(amount)
+            })),
+            {
+                label: 'Discretionary totaal',
+                value: `${formatCurrency(summary.discretionaryTotal)} (${((summary.discretionaryTotal / total) * 100).toFixed(1)}%)`
+            },
+            ...topDiscretionary.map(([category, amount]) => ({
+                label: `Discretionary · ${category}`,
+                value: formatCurrency(amount)
+            }))
+        ];
+
+        const trace = {
+            type: 'pie',
+            labels: ['Essentials', 'Discretionary'],
+            values: [summary.essentialTotal, summary.discretionaryTotal],
+            marker: { colors: ['#3b82f6', '#f59e0b'] },
+            textinfo: 'label+percent',
+            hovertemplate: '%{label}<br>%{value:.2f} EUR<extra></extra>'
+        };
+        const layout = {
+            margin: { t: 10, r: 10, l: 10, b: 10 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#cbd5f5' },
+            showlegend: false
+        };
+
+        openDetailModal({
+            title: '<i class="fas fa-scale-balanced"></i> Needs vs Wants',
+            summary: `Totaal uitgaven: ${formatCurrency(total)}`,
+            rows,
+            chart: { trace, layout }
+        });
+        return;
+    }
+
+    if (detailType === 'merchant-concentration') {
+        const merchantTotals = new Map();
+        transactions.forEach((transaction) => {
+            if ((transaction.amount || 0) >= 0) return;
+            const merchant = transaction.merchant || transaction.counterparty || transaction.description || 'Onbekend';
+            merchantTotals.set(merchant, (merchantTotals.get(merchant) || 0) + Math.abs(transaction.amount || 0));
+        });
+
+        const rows = Array.from(merchantTotals.entries())
+            .map(([merchant, amount]) => ({ merchant, amount }))
+            .sort((a, b) => b.amount - a.amount);
+
+        if (!rows.length) {
+            openDetailModal({
+                title: '<i class="fas fa-store"></i> Merchant concentration',
+                summary: 'Geen uitgaven gevonden in de geselecteerde periode.',
+                rows: [{ label: 'Geen merchant data.', value: '' }],
+                chart: null
+            });
+            return;
+        }
+
+        const totalExpenses = rows.reduce((sum, row) => sum + row.amount, 0);
+        const top = rows[0];
+        const topShare = totalExpenses > 0 ? (top.amount / totalExpenses) * 100 : 0;
+
+        const chartRows = rows.slice(0, 10).reverse();
+        const trace = {
+            type: 'bar',
+            orientation: 'h',
+            x: chartRows.map((row) => row.amount),
+            y: chartRows.map((row) => row.merchant),
+            marker: { color: '#60a5fa' },
+            text: chartRows.map((row) => `${((row.amount / totalExpenses) * 100).toFixed(1)}%`),
+            textposition: 'outside',
+            hovertemplate: '%{y}<br>%{x:.2f} EUR<extra></extra>'
+        };
+        const layout = {
+            margin: { t: 10, r: 30, l: 160, b: 30 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#cbd5f5' },
+            xaxis: { gridcolor: 'rgba(255,255,255,0.08)' },
+            yaxis: { automargin: true }
+        };
+
+        openDetailModal({
+            title: '<i class="fas fa-store"></i> Merchant concentration',
+            summary: `Top merchant: ${top.merchant} (${topShare.toFixed(1)}% van uitgaven)`,
+            rows: rows.slice(0, 20).map((row) => ({
+                label: row.merchant,
+                value: `${formatCurrency(row.amount)} (${((row.amount / totalExpenses) * 100).toFixed(1)}%)`
+            })),
+            chart: { trace, layout }
+        });
+        return;
+    }
+
+    if (detailType === 'expense-momentum') {
+        const windows = splitRollingWindows(transactions, 30);
+        const recentByCategory = buildExpenseByCategory(windows.recent);
+        const priorByCategory = buildExpenseByCategory(windows.prior);
+        const categories = new Set([...Object.keys(recentByCategory), ...Object.keys(priorByCategory)]);
+
+        const rows = Array.from(categories)
+            .map((category) => {
+                const recent = recentByCategory[category] || 0;
+                const prior = priorByCategory[category] || 0;
+                const delta = recent - prior;
+                const deltaPct = prior > 0 ? (delta / prior) * 100 : 0;
+                return { category, recent, prior, delta, deltaPct };
+            })
+            .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+        if (!rows.length) {
+            openDetailModal({
+                title: '<i class="fas fa-chart-line"></i> Expense momentum',
+                summary: 'Onvoldoende uitgaven voor momentum-analyse.',
+                rows: [{ label: 'Geen categorie data.', value: '' }],
+                chart: null
+            });
+            return;
+        }
+
+        const recentTotal = rows.reduce((sum, row) => sum + row.recent, 0);
+        const priorTotal = rows.reduce((sum, row) => sum + row.prior, 0);
+        const totalChangePct = priorTotal > 0 ? ((recentTotal - priorTotal) / priorTotal) * 100 : 0;
+
+        const chartRows = [...rows]
+            .sort((a, b) => (b.recent + b.prior) - (a.recent + a.prior))
+            .slice(0, 8);
+
+        const traces = [
+            {
+                type: 'bar',
+                name: 'Vorige 30d',
+                x: chartRows.map((row) => row.category),
+                y: chartRows.map((row) => row.prior),
+                marker: { color: 'rgba(148,163,184,0.8)' }
+            },
+            {
+                type: 'bar',
+                name: 'Laatste 30d',
+                x: chartRows.map((row) => row.category),
+                y: chartRows.map((row) => row.recent),
+                marker: { color: 'rgba(59,130,246,0.85)' }
+            }
+        ];
+        const layout = {
+            barmode: 'group',
+            margin: { t: 10, r: 20, l: 40, b: 80 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#cbd5f5' },
+            xaxis: { tickangle: -30 },
+            yaxis: { gridcolor: 'rgba(255,255,255,0.08)' }
+        };
+
+        openDetailModal({
+            title: '<i class="fas fa-chart-line"></i> Expense momentum (30d vs vorige 30d)',
+            summary: `Totaal: ${formatCurrency(recentTotal)} vs ${formatCurrency(priorTotal)} (${totalChangePct.toFixed(1)}%)`,
+            rows: rows.slice(0, 20).map((row) => ({
+                label: row.category,
+                value: `${formatCurrency(row.recent)} vs ${formatCurrency(row.prior)} (Δ ${formatCurrency(row.delta)}, ${row.deltaPct.toFixed(1)}%)`
+            })),
+            chart: { trace: traces, layout }
+        });
+        return;
+    }
+
     if (detailType === 'money-flow') {
         const flowByCategory = new Map();
         transactions.forEach((transaction) => {
@@ -1660,7 +1870,15 @@ function showTransactionDetail(detailType) {
             })),
             chart: { trace, layout }
         });
+        return;
     }
+
+    openDetailModal({
+        title: '<i class="fas fa-info-circle"></i> Detail',
+        summary: 'Geen detailweergave beschikbaar voor dit onderdeel.',
+        rows: [{ label: 'Onbekend detailtype.', value: detailType || 'n/a' }],
+        chart: null
+    });
 }
 
 function renderSparkline(canvasId, data, color) {
@@ -2214,43 +2432,185 @@ function renderRacingChart(data) {
     updateRacingChart(racingData.months.length - 1);
 }
 
+const ESSENTIAL_CATEGORIES = new Set(['Boodschappen', 'Wonen', 'Utilities', 'Vervoer', 'Zorg']);
+
+function buildExpenseByCategory(transactions) {
+    const totals = {};
+    (transactions || []).forEach((transaction) => {
+        if ((transaction.amount || 0) >= 0) return;
+        const category = transaction.category || 'Overig';
+        totals[category] = (totals[category] || 0) + Math.abs(transaction.amount || 0);
+    });
+    return totals;
+}
+
+function splitRollingWindows(transactions, windowDays = 30) {
+    const normalized = (transactions || [])
+        .filter((transaction) => transaction.date instanceof Date && !Number.isNaN(transaction.date.getTime()))
+        .sort((a, b) => a.date - b.date);
+
+    if (!normalized.length) {
+        return {
+            recent: [],
+            prior: [],
+            endDate: null,
+            recentStart: null,
+            priorStart: null
+        };
+    }
+
+    const endDate = new Date(normalized[normalized.length - 1].date);
+    endDate.setHours(23, 59, 59, 999);
+
+    const recentStart = new Date(endDate);
+    recentStart.setDate(recentStart.getDate() - (windowDays - 1));
+    recentStart.setHours(0, 0, 0, 0);
+
+    const priorStart = new Date(recentStart);
+    priorStart.setDate(priorStart.getDate() - windowDays);
+
+    const recent = [];
+    const prior = [];
+
+    normalized.forEach((transaction) => {
+        if (transaction.date >= recentStart && transaction.date <= endDate) {
+            recent.push(transaction);
+            return;
+        }
+        if (transaction.date >= priorStart && transaction.date < recentStart) {
+            prior.push(transaction);
+        }
+    });
+
+    return { recent, prior, endDate, recentStart, priorStart };
+}
+
+function summarizeNeedsVsWants(transactions) {
+    const summary = {
+        essentialTotal: 0,
+        discretionaryTotal: 0,
+        essentialByCategory: {},
+        discretionaryByCategory: {}
+    };
+
+    (transactions || []).forEach((transaction) => {
+        if ((transaction.amount || 0) >= 0) return;
+        const amount = Math.abs(transaction.amount || 0);
+        const category = transaction.category || 'Overig';
+        if (ESSENTIAL_CATEGORIES.has(category)) {
+            summary.essentialTotal += amount;
+            summary.essentialByCategory[category] = (summary.essentialByCategory[category] || 0) + amount;
+            return;
+        }
+        summary.discretionaryTotal += amount;
+        summary.discretionaryByCategory[category] = (summary.discretionaryByCategory[category] || 0) + amount;
+    });
+
+    return summary;
+}
+
 function renderInsights(data, kpis) {
     const biggestCategory = document.getElementById('biggestCategory');
     const avgDaily = document.getElementById('avgDaily');
     const expensiveDay = document.getElementById('expensiveDay');
     const trendInsight = document.getElementById('trendInsight');
-    
-    const categoryTotals = {};
-    data.forEach(t => {
-        if (t.amount >= 0) return;
-        categoryTotals[t.category] = (categoryTotals[t.category] || 0) + Math.abs(t.amount);
-    });
-    const biggest = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1])[0];
+    const liquidityRunway = document.getElementById('liquidityRunway');
+    const needsVsWants = document.getElementById('needsVsWants');
+    const topMerchantShare = document.getElementById('topMerchantShare');
+    const projectedMonthNet = document.getElementById('projectedMonthNet');
+
+    const expenseByCategory = buildExpenseByCategory(data);
+    const biggest = Object.entries(expenseByCategory).sort((a, b) => b[1] - a[1])[0];
     if (biggestCategory) {
         biggestCategory.textContent = biggest ? `${biggest[0]} (${formatCurrency(biggest[1])})` : 'N/A';
     }
-    
+
     const daily = buildDailyTotals(data);
-    const avg = daily.length ? daily.reduce((sum, d) => sum + d.expenses, 0) / daily.length : 0;
+    const avg = daily.length ? daily.reduce((sum, day) => sum + day.expenses, 0) / daily.length : 0;
     if (avgDaily) avgDaily.textContent = formatCurrency(avg);
-    
+
     const expensive = [...daily].sort((a, b) => b.expenses - a.expenses)[0];
     if (expensiveDay) {
         expensiveDay.textContent = expensive ? `${expensive.date.toLocaleDateString('nl-NL')} (${formatCurrency(expensive.expenses)})` : 'N/A';
     }
-    
-    const mid = Math.floor(daily.length / 2);
-    const recent = daily.slice(mid).reduce((sum, d) => sum + d.expenses, 0);
-    const prior = daily.slice(0, mid).reduce((sum, d) => sum + d.expenses, 0);
-    const change = prior > 0 ? ((recent - prior) / prior) * 100 : 0;
+
+    const windows = splitRollingWindows(data, 30);
+    const recentExpenses = windows.recent.filter((transaction) => transaction.amount < 0).reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0);
+    const priorExpenses = windows.prior.filter((transaction) => transaction.amount < 0).reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0);
+    const recentIncome = windows.recent.filter((transaction) => transaction.amount > 0).reduce((sum, transaction) => sum + transaction.amount, 0);
+    const recentChange = priorExpenses > 0 ? ((recentExpenses - priorExpenses) / priorExpenses) * 100 : 0;
+
     if (trendInsight) {
-        const direction = change <= 0 ? 'daalt' : 'stijgt';
+        const direction = recentChange <= 0 ? 'daalt' : 'stijgt';
         const biggestLabel = biggest ? biggest[0] : 'Overig';
         const biggestValue = biggest ? biggest[1] : 0;
-        const action = change > 10
+        const action = recentChange > 10
             ? `Actie: beperk ${biggestLabel} met ~${formatCurrency(biggestValue * 0.1)}`
             : 'Actie: houd dit niveau vast';
-        trendInsight.textContent = `Uitgaventrend ${direction} (${change.toFixed(1)}%). ${action}.`;
+        trendInsight.textContent = `30d uitgaventrend ${direction} (${recentChange.toFixed(1)}%). ${action}.`;
+    }
+
+    const liquidBalance = balanceMetrics
+        ? (Number(balanceMetrics.totals.checking) || 0) + (Number(balanceMetrics.totals.savings) || 0)
+        : null;
+    const observedRecentDays = Math.max(new Set(windows.recent.map((transaction) => toDateKey(transaction.date))).size, 1);
+    const dailyBurn = Math.max((recentExpenses - recentIncome) / observedRecentDays, 0);
+
+    if (liquidityRunway) {
+        if (liquidBalance === null) {
+            liquidityRunway.textContent = 'N/A';
+        } else if (dailyBurn <= 0.01) {
+            liquidityRunway.textContent = '∞ (positieve cashflow)';
+        } else {
+            const runwayDays = liquidBalance / dailyBurn;
+            const runwayMonths = runwayDays / 30;
+            liquidityRunway.textContent = `${Math.round(runwayDays)} dagen (${runwayMonths.toFixed(1)} mnd)`;
+        }
+    }
+
+    const needsSummary = summarizeNeedsVsWants(data);
+    const totalNeedsWants = needsSummary.essentialTotal + needsSummary.discretionaryTotal;
+    if (needsVsWants) {
+        if (totalNeedsWants <= 0.01) {
+            needsVsWants.textContent = 'N/A';
+        } else {
+            const essentialShare = (needsSummary.essentialTotal / totalNeedsWants) * 100;
+            needsVsWants.textContent = `${essentialShare.toFixed(1)}% essentials`;
+        }
+    }
+
+    const merchantExpenses = {};
+    data.forEach((transaction) => {
+        if ((transaction.amount || 0) >= 0) return;
+        const merchant = transaction.merchant || transaction.counterparty || transaction.description || 'Onbekend';
+        merchantExpenses[merchant] = (merchantExpenses[merchant] || 0) + Math.abs(transaction.amount || 0);
+    });
+    const merchantsSorted = Object.entries(merchantExpenses).sort((a, b) => b[1] - a[1]);
+    if (topMerchantShare) {
+        if (!merchantsSorted.length || kpis.expenses <= 0) {
+            topMerchantShare.textContent = 'N/A';
+        } else {
+            const [merchantName, merchantTotal] = merchantsSorted[0];
+            const share = (merchantTotal / kpis.expenses) * 100;
+            topMerchantShare.textContent = `${merchantName} (${share.toFixed(1)}%)`;
+        }
+    }
+
+    if (projectedMonthNet) {
+        const now = new Date();
+        const monthTransactions = data.filter((transaction) => (
+            transaction.date.getFullYear() === now.getFullYear()
+            && transaction.date.getMonth() === now.getMonth()
+        ));
+        if (!monthTransactions.length) {
+            projectedMonthNet.textContent = 'N/A';
+        } else {
+            const monthNet = monthTransactions.reduce((sum, transaction) => sum + (transaction.amount || 0), 0);
+            const elapsedDays = Math.max(now.getDate(), 1);
+            const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+            const projected = (monthNet / elapsedDays) * daysInMonth;
+            projectedMonthNet.textContent = formatCurrency(projected);
+        }
     }
 }
 
