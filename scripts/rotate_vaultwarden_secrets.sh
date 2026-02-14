@@ -60,6 +60,65 @@ prompt_hidden_master_password() {
   NEW_MASTER_PASSWORD="$value"
 }
 
+prompt_yes_no() {
+  question="$1"
+  printf '%s' "$question" >/dev/tty
+  IFS= read -r answer </dev/tty || true
+  case "$(printf '%s' "${answer}" | tr '[:upper:]' '[:lower:]')" in
+    y|yes)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+prompt_non_empty_visible() {
+  while :; do
+    printf '%s' "New Vaultwarden client_id: " >/dev/tty
+    IFS= read -r value </dev/tty || true
+    value="$(trim_crlf "${value}")"
+    if [ -n "${value}" ]; then
+      NEW_CLIENT_ID="${value}"
+      return 0
+    fi
+    say "client_id cannot be empty when rotation is selected."
+  done
+}
+
+prompt_non_empty_hidden_client_secret() {
+  while :; do
+    printf '%s' "New Vaultwarden client_secret: " >/dev/tty
+    stty -echo </dev/tty
+    IFS= read -r value </dev/tty || true
+    stty echo </dev/tty
+    printf '\n' >/dev/tty
+    value="$(trim_crlf "${value}")"
+    if [ -n "${value}" ]; then
+      NEW_CLIENT_SECRET="${value}"
+      return 0
+    fi
+    say "client_secret cannot be empty when rotation is selected."
+  done
+}
+
+prompt_non_empty_hidden_master_password() {
+  while :; do
+    printf '%s' "New Vaultwarden master password: " >/dev/tty
+    stty -echo </dev/tty
+    IFS= read -r value </dev/tty || true
+    stty echo </dev/tty
+    printf '\n' >/dev/tty
+    value="$(trim_crlf "${value}")"
+    if [ -n "${value}" ]; then
+      NEW_MASTER_PASSWORD="${value}"
+      return 0
+    fi
+    say "master password cannot be empty when rotation is selected."
+  done
+}
+
 if ! command -v docker >/dev/null 2>&1; then
   echo "ERROR: docker command not found"
   exit 1
@@ -81,20 +140,30 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 if [ -t 0 ]; then
-  if [ -z "${NEW_CLIENT_ID}" ]; then
-    prompt_visible_client_id
+  if [ -z "${NEW_CLIENT_ID}" ] && [ -z "${NEW_CLIENT_SECRET}" ] && [ -z "${NEW_MASTER_PASSWORD}" ]; then
+    say "Select which secrets to rotate."
+    if prompt_yes_no "Rotate client_id? [y/N]: "; then
+      prompt_non_empty_visible
+    fi
+    if prompt_yes_no "Rotate client_secret? [y/N]: "; then
+      prompt_non_empty_hidden_client_secret
+    fi
+    if prompt_yes_no "Rotate master password? [y/N]: "; then
+      prompt_non_empty_hidden_master_password
+    fi
   else
-    say "Using NEW_VAULTWARDEN_CLIENT_ID from environment (prompt skipped)."
-  fi
-  if [ -z "${NEW_CLIENT_SECRET}" ]; then
-    prompt_hidden_client_secret
-  else
-    say "Using NEW_VAULTWARDEN_CLIENT_SECRET from environment (prompt skipped)."
-  fi
-  if [ -z "${NEW_MASTER_PASSWORD}" ]; then
-    prompt_hidden_master_password
-  else
-    say "Using NEW_VAULTWARDEN_MASTER_PASSWORD from environment (prompt skipped)."
+    [ -n "${NEW_CLIENT_ID}" ] && say "Using NEW_VAULTWARDEN_CLIENT_ID from environment."
+    [ -n "${NEW_CLIENT_SECRET}" ] && say "Using NEW_VAULTWARDEN_CLIENT_SECRET from environment."
+    [ -n "${NEW_MASTER_PASSWORD}" ] && say "Using NEW_VAULTWARDEN_MASTER_PASSWORD from environment."
+    if [ -z "${NEW_CLIENT_ID}" ]; then
+      prompt_visible_client_id
+    fi
+    if [ -z "${NEW_CLIENT_SECRET}" ]; then
+      prompt_hidden_client_secret
+    fi
+    if [ -z "${NEW_MASTER_PASSWORD}" ]; then
+      prompt_hidden_master_password
+    fi
   fi
 fi
 
