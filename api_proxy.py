@@ -1643,7 +1643,7 @@ def classify_account_type(account):
     # Hard signals based on official type-like fields
     if any(token in explicit_type_text for token in ('investment', 'stock', 'share', 'crypto', 'belegging')):
         return 'investment'
-    if any(token in explicit_type_text for token in ('saving', 'savings', 'spaar', 'reserve', 'goal')):
+    if any(token in explicit_type_text for token in ('saving', 'savings', 'spaar', 'reserve', 'goal', 'stash')):
         return 'savings'
     if any(token in explicit_type_text for token in ('checking', 'payment', 'bank', 'card', 'current')):
         return 'checking'
@@ -1651,10 +1651,10 @@ def classify_account_type(account):
     if any(token in fingerprint for token in (
         'savings', 'spaar', 'spaarrekening', 'sparen',
         'reserve', 'buffer', 'onvoorzien', 'emergency',
-        'vakantie', 'doel', 'goal'
+        'vakantie', 'doel', 'goal', 'potje', 'stash'
     )):
         return 'savings'
-    if any(token in fingerprint for token in ('investment', 'stock', 'share', 'crypto', 'belegging')):
+    if any(token in fingerprint for token in ('investment', 'stock', 'share', 'crypto', 'belegging', 'etf', 'equity')):
         return 'investment'
     return 'checking'
 
@@ -2339,6 +2339,258 @@ def get_vaultwarden_status_snapshot():
         status['error'] = f"CLI path failed, API fallback status: {api_status.get('error')}"
     return status
 
+def _safe_ratio(numerator, denominator, default=None):
+    try:
+        denominator_value = float(denominator)
+        if denominator_value <= 0:
+            return default
+        return float(numerator) / denominator_value
+    except (TypeError, ValueError, ZeroDivisionError):
+        return default
+
+def build_data_quality_summary(days=90):
+    """
+    Build diagnostics summary for real-data quality in current dashboard runtime.
+    Uses local history store to avoid heavy Bunq API calls.
+    """
+    summary = {
+        'days': days,
+        'history_store_enabled': DATA_DB_ENABLED,
+        'db_available': False,
+        'score': 0,
+        'quality_label': 'Unknown',
+        'metrics': {
+            'total_transactions': 0,
+            'expense_transactions': 0,
+            'income_transactions': 0,
+            'internal_transactions': 0,
+            'categorized_expenses': 0,
+            'merchant_named_expenses': 0,
+            'amount_eur_known': 0,
+            'latest_transaction_at': None,
+            'latest_capture_at': None,
+            'capture_freshness_hours': None,
+            'latest_snapshot_date': None,
+            'total_accounts': 0,
+            'checking_accounts': 0,
+            'savings_accounts': 0,
+            'investment_accounts': 0,
+            'non_eur_accounts': 0,
+            'non_eur_converted_accounts': 0,
+        },
+        'coverage': {
+            'category_coverage': None,
+            'merchant_coverage': None,
+            'amount_eur_coverage': None,
+            'fx_coverage': None,
+            'internal_share': None,
+        },
+        'warnings': [],
+        'recommendations': [],
+        'error': None,
+    }
+
+    if not DATA_DB_ENABLED:
+        summary['error'] = 'Historical data store disabled'
+        return summary
+
+    connection = get_data_db_connection()
+    if connection is None:
+        summary['error'] = 'Unable to open historical data store'
+        return summary
+
+    summary['db_available'] = True
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    try:
+        tx_row = connection.execute(
+            """
+            SELECT
+                COUNT(*) AS total_transactions,
+                SUM(CASE WHEN amount < 0 THEN 1 ELSE 0 END) AS expense_transactions,
+                SUM(CASE WHEN amount > 0 THEN 1 ELSE 0 END) AS income_transactions,
+                SUM(CASE WHEN is_internal_transfer = 1 THEN 1 ELSE 0 END) AS internal_transactions,
+                SUM(
+                    CASE
+                        WHEN amount < 0
+                             AND category IS NOT NULL
+                             AND TRIM(category) != ''
+                             AND LOWER(TRIM(category)) NOT IN ('overig', 'unknown', 'onbekend')
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS categorized_expenses,
+                SUM(
+                    CASE
+                        WHEN amount < 0
+                             AND merchant IS NOT NULL
+                             AND TRIM(merchant) != ''
+                             AND LOWER(TRIM(merchant)) NOT IN ('unknown', 'onbekend')
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS merchant_named_expenses,
+                SUM(CASE WHEN amount_eur IS NOT NULL THEN 1 ELSE 0 END) AS amount_eur_known,
+                MAX(tx_date) AS latest_transaction_at,
+                MAX(captured_at) AS latest_capture_at
+            FROM transaction_cache
+            WHERE tx_date >= ?
+            """,
+            (cutoff_iso,),
+        ).fetchone()
+
+        latest_snapshot_row = connection.execute(
+            "SELECT MAX(snapshot_date) AS latest_snapshot_date FROM account_snapshots"
+        ).fetchone()
+        latest_snapshot_date = latest_snapshot_row['latest_snapshot_date'] if latest_snapshot_row else None
+
+        accounts_metrics = {
+            'total_accounts': 0,
+            'checking_accounts': 0,
+            'savings_accounts': 0,
+            'investment_accounts': 0,
+            'non_eur_accounts': 0,
+            'non_eur_converted_accounts': 0,
+        }
+        if latest_snapshot_date:
+            account_row = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_accounts,
+                    SUM(CASE WHEN account_type = 'checking' THEN 1 ELSE 0 END) AS checking_accounts,
+                    SUM(CASE WHEN account_type = 'savings' THEN 1 ELSE 0 END) AS savings_accounts,
+                    SUM(CASE WHEN account_type = 'investment' THEN 1 ELSE 0 END) AS investment_accounts,
+                    SUM(CASE WHEN UPPER(balance_currency) != 'EUR' THEN 1 ELSE 0 END) AS non_eur_accounts,
+                    SUM(
+                        CASE
+                            WHEN UPPER(balance_currency) != 'EUR'
+                                 AND balance_eur_value IS NOT NULL
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) AS non_eur_converted_accounts
+                FROM account_snapshots
+                WHERE snapshot_date = ?
+                """,
+                (latest_snapshot_date,),
+            ).fetchone()
+            if account_row:
+                accounts_metrics = {
+                    key: int(account_row[key] or 0)
+                    for key in accounts_metrics.keys()
+                }
+
+        total_transactions = int(tx_row['total_transactions'] or 0)
+        expense_transactions = int(tx_row['expense_transactions'] or 0)
+        income_transactions = int(tx_row['income_transactions'] or 0)
+        internal_transactions = int(tx_row['internal_transactions'] or 0)
+        categorized_expenses = int(tx_row['categorized_expenses'] or 0)
+        merchant_named_expenses = int(tx_row['merchant_named_expenses'] or 0)
+        amount_eur_known = int(tx_row['amount_eur_known'] or 0)
+
+        capture_freshness_hours = None
+        latest_capture_raw = tx_row['latest_capture_at']
+        latest_capture_dt = parse_bunq_datetime(latest_capture_raw, context='transaction_cache.latest_capture_at')
+        if latest_capture_dt is not None:
+            capture_freshness_hours = round(
+                max((datetime.now(timezone.utc) - latest_capture_dt).total_seconds(), 0) / 3600,
+                2,
+            )
+
+        summary['metrics'].update({
+            'total_transactions': total_transactions,
+            'expense_transactions': expense_transactions,
+            'income_transactions': income_transactions,
+            'internal_transactions': internal_transactions,
+            'categorized_expenses': categorized_expenses,
+            'merchant_named_expenses': merchant_named_expenses,
+            'amount_eur_known': amount_eur_known,
+            'latest_transaction_at': tx_row['latest_transaction_at'],
+            'latest_capture_at': latest_capture_raw,
+            'capture_freshness_hours': capture_freshness_hours,
+            'latest_snapshot_date': latest_snapshot_date,
+            **accounts_metrics,
+        })
+
+        category_coverage = _safe_ratio(categorized_expenses, expense_transactions, default=None)
+        merchant_coverage = _safe_ratio(merchant_named_expenses, expense_transactions, default=None)
+        amount_eur_coverage = _safe_ratio(amount_eur_known, total_transactions, default=None)
+        fx_coverage = _safe_ratio(
+            accounts_metrics['non_eur_converted_accounts'],
+            accounts_metrics['non_eur_accounts'],
+            default=1.0 if accounts_metrics['non_eur_accounts'] == 0 else None,
+        )
+        internal_share = _safe_ratio(internal_transactions, total_transactions, default=0.0)
+
+        summary['coverage'].update({
+            'category_coverage': category_coverage,
+            'merchant_coverage': merchant_coverage,
+            'amount_eur_coverage': amount_eur_coverage,
+            'fx_coverage': fx_coverage,
+            'internal_share': internal_share,
+        })
+
+        category_component = category_coverage if category_coverage is not None else 0.0
+        merchant_component = merchant_coverage if merchant_coverage is not None else 0.0
+        amount_component = amount_eur_coverage if amount_eur_coverage is not None else 0.0
+        fx_component = fx_coverage if fx_coverage is not None else 0.0
+        score = int(round(
+            max(
+                0.0,
+                min(
+                    100.0,
+                    100.0 * (
+                        (0.35 * category_component)
+                        + (0.30 * merchant_component)
+                        + (0.20 * amount_component)
+                        + (0.15 * fx_component)
+                    )
+                )
+            )
+        ))
+        summary['score'] = score
+        if score >= 85:
+            summary['quality_label'] = 'Good'
+        elif score >= 70:
+            summary['quality_label'] = 'Fair'
+        else:
+            summary['quality_label'] = 'Needs attention'
+
+        warnings = []
+        recommendations = []
+        if total_transactions < 120:
+            warnings.append('Relatief weinig transacties in cache voor geselecteerde periode.')
+            recommendations.append('Gebruik een langere periode of laad live transacties opnieuw in het dashboard.')
+        if category_coverage is not None and category_coverage < 0.78:
+            warnings.append('Categorie-dekking op uitgaven is laag.')
+            recommendations.append('Verfijn categorisatieregels voor veel voorkomende merchants/descriptions.')
+        if merchant_coverage is not None and merchant_coverage < 0.85:
+            warnings.append('Merchant-dekking op uitgaven is laag.')
+            recommendations.append('Controleer merchant parsing en tegenpartijvelden in Bunq responses.')
+        if amount_eur_coverage is not None and amount_eur_coverage < 0.95:
+            warnings.append('Niet alle transacties hebben EUR-waarde in lokale store.')
+            recommendations.append('Controleer FX lookup en amount-eur opslag in transaction cache.')
+        if fx_coverage is not None and fx_coverage < 0.95:
+            warnings.append('Niet alle non-EUR rekeningen zijn omgerekend naar EUR.')
+            recommendations.append('Controleer FX-rates en balance conversion voor non-EUR accounts.')
+        if capture_freshness_hours is not None and capture_freshness_hours > 24:
+            warnings.append('Lokale datacache is ouder dan 24 uur.')
+            recommendations.append('Voer een refresh uit zodat recente accounts/transacties worden opgeslagen.')
+        if internal_share is not None and internal_share > 0.5:
+            warnings.append('Meer dan 50% van transacties lijkt internal transfer.')
+            recommendations.append('Gebruik filter `exclude_internal=true` voor zuivere uitgavenanalyses.')
+
+        summary['warnings'] = warnings
+        summary['recommendations'] = recommendations
+        return summary
+
+    except Exception as exc:
+        summary['error'] = str(exc)
+        logger.warning(f"⚠️ Failed building data quality summary: {exc}")
+        return summary
+    finally:
+        connection.close()
+
 # ============================================
 # CONFIGURATION
 # ============================================
@@ -2501,6 +2753,33 @@ def get_admin_status():
         }
     }
     return jsonify(response)
+
+@app.route('/api/admin/data-quality', methods=['GET'])
+@requires_auth
+@rate_limit('general')
+def get_admin_data_quality():
+    """Return data quality diagnostics for current historical store."""
+    days = clamp_days(request.args.get('days', 90))
+    summary = build_data_quality_summary(days=days)
+
+    if not summary.get('history_store_enabled', False):
+        return jsonify({
+            'success': False,
+            'error': summary.get('error', 'Historical data store disabled'),
+            'data': summary
+        }), 503
+
+    if summary.get('error'):
+        return jsonify({
+            'success': False,
+            'error': summary.get('error', 'Failed to build data quality summary'),
+            'data': summary
+        }), 500
+
+    return jsonify({
+        'success': True,
+        'data': summary
+    })
 
 @app.route('/api/admin/egress-ip', methods=['GET'])
 @requires_auth
@@ -3012,17 +3291,19 @@ def categorize_transaction(description, counterparty_name, is_internal=False, me
 
     if any(word in combined for word in [
         'albert heijn', ' ah ', 'jumbo', 'lidl', 'aldi', 'plus', 'dirk',
-        'picnic', 'ekoplaza', 'spar ', 'coop', 'supermarkt', 'carrefour'
+        'picnic', 'ekoplaza', 'spar ', 'coop', 'supermarkt', 'carrefour',
+        'dekamarkt', 'hoogvliet', 'vomar', 'poiesz', 'jan linders', 'appie'
     ]):
         return 'Boodschappen'
     elif any(word in combined for word in [
         'restaurant', 'cafe', 'bar', 'pizza', 'burger', 'starbucks',
-        'thuisbezorgd', 'ubereats', 'deliveroo', 'mcdonald'
+        'thuisbezorgd', 'ubereats', 'deliveroo', 'mcdonald', 'kfc', 'subway'
     ]):
         return 'Horeca'
     elif any(word in combined for word in [
         'ns ', 'train', 'bus', 'taxi', 'uber', 'ov ', 'parking',
-        'q-park', 'shell', 'texaco', 'esso', 'total', 'benzine'
+        'q-park', 'shell', 'texaco', 'esso', 'total', 'benzine',
+        'ov-chip', 'ovchip', 'arriva', 'connexxion', 'ret ', 'gvb', 'qbuzz'
     ]):
         return 'Vervoer'
     elif any(word in combined for word in ['huur', 'rent', 'hypotheek', 'mortgage', 'vve']):
@@ -3031,13 +3312,25 @@ def categorize_transaction(description, counterparty_name, is_internal=False, me
         return 'Verzekering'
     elif any(word in combined for word in ['belasting', 'belastingdienst', 'tax', 'gemeente', 'waterschap']):
         return 'Belastingen'
-    elif any(word in combined for word in ['eneco', 'essent', 'energie', 'gas', 'water', 'ziggo', 'kpn', 'telecom']):
+    elif any(word in combined for word in [
+        'eneco', 'essent', 'energie', 'gas', 'water', 'ziggo', 'kpn', 'telecom',
+        'odido', 'vodafone', 't-mobile', 'tele2', 'youfone', 'hollandsnieuwe'
+    ]):
         return 'Utilities'
-    elif any(word in combined for word in ['bol.com', 'coolblue', 'mediamarkt', 'amazon', 'zara', 'h&m', 'shop']):
+    elif any(word in combined for word in [
+        'bol.com', 'coolblue', 'mediamarkt', 'amazon', 'zara', 'h&m', 'shop',
+        'hema', 'action', 'ikea', 'primark', 'kruidvat', 'etos', 'zalando'
+    ]):
         return 'Shopping'
-    elif any(word in combined for word in ['netflix', 'spotify', 'youtube', 'cinema', 'pathé', 'concert', 'steam']):
+    elif any(word in combined for word in [
+        'netflix', 'spotify', 'youtube', 'cinema', 'pathé', 'concert', 'steam',
+        'nintendo', 'playstation', 'xbox', 'disney+'
+    ]):
         return 'Entertainment'
-    elif any(word in combined for word in ['apotheek', 'pharmacy', 'dokter', 'doctor', 'tandarts', 'dentist']):
+    elif any(word in combined for word in [
+        'apotheek', 'pharmacy', 'dokter', 'doctor', 'tandarts', 'dentist',
+        'huisarts', 'ziekenhuis', 'hospital', 'zorgverzekeraar'
+    ]):
         return 'Zorg'
     elif any(word in combined for word in ['salaris', 'salary', 'loon', 'wage']):
         return 'Salaris'

@@ -152,3 +152,18 @@ Dit bestand houdt een compacte voortgangshistorie bij, zodat chatcontextverlies 
 
 - `cb04bdd` Run whitelist button in safe two-step flow with IP prompt
 - `e1cd3b3` Harden whitelist helper script and downgrade auto-whitelist noise
+
+### Aanvullende P1-uitwerking (stap 1 t/m 4)
+
+- Real-data validatie toegevoegd:
+  - nieuwe backend endpoint `GET /api/admin/data-quality` met kwaliteitscore, dekking, warnings en aanbevelingen op basis van lokale history store.
+  - nieuwe dashboard insight `Data Quality` met doorklikbare detailmodal en component-score grafiek.
+- Actionable metrics verder verfijnd:
+  - `Next Best Action` gebruikt nu ook inkomensdaling (30d vs prior 30d), categorie-concentratie en urgente runway-signalen (<60 dagen).
+  - top-actie toont nu prioriteit expliciet (`P1/P2/P3`).
+- Edge-cases verder gehard:
+  - accounttype-herkenning uitgebreid (o.a. `potje`, `stash`, `etf/equity` signalen).
+  - categorisatie uitgebreid met extra NL merchants/keywords (boodschappen, vervoer, utilities, shopping, entertainment, zorg).
+- Visualisaties informatiever gemaakt:
+  - Sankey bevat nu link-aandelen (% van bron) in hover + totaalannotatie (in/uit/netto).
+  - Sunburst toont meer categorieën/merchants met share-aware selectie en duidelijke parent-percentage hover.

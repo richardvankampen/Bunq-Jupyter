@@ -34,6 +34,8 @@ let isAuthenticated = false;
 let accountsList = [];
 let balanceMetrics = null;
 let balanceHistoryData = null;
+let dataQualitySummary = null;
+let latestDataQualitySummary = null;
 let adminStatusData = null;
 let selectedAccountIds = new Set();
 const chartRegistry = {
@@ -357,6 +359,33 @@ async function loadBalanceHistory(days = CONFIG.timeRange) {
     }
 
     balanceHistoryData = null;
+    return null;
+}
+
+async function loadDataQuality(days = CONFIG.timeRange) {
+    if (!isAuthenticated) {
+        dataQualitySummary = null;
+        return null;
+    }
+
+    try {
+        const response = await fetch(`${CONFIG.apiEndpoint}/admin/data-quality?days=${days}`, {
+            credentials: 'include'
+        });
+        if (!response.ok) {
+            dataQualitySummary = null;
+            return null;
+        }
+        const payload = await response.json();
+        if (payload && payload.success && payload.data) {
+            dataQualitySummary = payload.data;
+            return dataQualitySummary;
+        }
+    } catch (error) {
+        console.warn('Unable to load data quality summary:', error);
+    }
+
+    dataQualitySummary = null;
     return null;
 }
 
@@ -893,10 +922,12 @@ async function loadRealData() {
             }));
             
             console.log(`✅ Loaded ${transactionsData.length} real transactions`);
+            await loadDataQuality(CONFIG.timeRange);
             processAndRenderData(transactionsData);
         } else if (all.length === 0 && total === 0) {
             console.warn('⚠️ No transactions found');
             transactionsData = [];
+            await loadDataQuality(CONFIG.timeRange);
             processAndRenderData([]);
         } else if (lastResponse === null) {
             // Session expired - modal already shown
@@ -918,6 +949,8 @@ function loadDemoData() {
     console.log('📊 Generating demo data...');
     
     setTimeout(() => {
+        dataQualitySummary = null;
+        latestDataQualitySummary = null;
         transactionsData = generateDemoTransactions(CONFIG.timeRange);
         processAndRenderData(transactionsData);
         hideLoading();
@@ -962,19 +995,28 @@ function classifyAccountType(account) {
         return declaredType;
     }
 
-    const fingerprint = `${account?.description || ''} ${account?.account_class || ''}`.toLowerCase();
+    const fingerprint = `${account?.description || ''} ${account?.account_class || ''} ${account?.account_type || ''} ${account?.monetary_account_type || ''}`.toLowerCase();
     if (
         fingerprint.includes('savings')
         || fingerprint.includes('spaar')
         || fingerprint.includes('reserve')
         || fingerprint.includes('buffer')
+        || fingerprint.includes('potje')
         || fingerprint.includes('onvoorzien')
         || fingerprint.includes('emergency')
         || fingerprint.includes('vakantie')
         || fingerprint.includes('doel')
         || fingerprint.includes('goal')
+        || fingerprint.includes('stash')
     ) return 'savings';
-    if (fingerprint.includes('investment') || fingerprint.includes('crypto') || fingerprint.includes('belegging')) return 'investment';
+    if (
+        fingerprint.includes('investment')
+        || fingerprint.includes('crypto')
+        || fingerprint.includes('belegging')
+        || fingerprint.includes('stock')
+        || fingerprint.includes('share')
+        || fingerprint.includes('etf')
+    ) return 'investment';
     return 'checking';
 }
 
@@ -1165,6 +1207,7 @@ function processAndRenderData(data) {
     const filtered = applyClientFilters(data);
     const normalized = normalizeTransactions(filtered);
     balanceMetrics = calculateBalanceMetrics(normalized, accountsList, balanceHistoryData);
+    latestDataQualitySummary = computeDataQualitySummary(normalized, accountsList, dataQualitySummary);
     const kpis = calculateKPIs(normalized);
     renderKPIs(kpis, normalized);
     renderBalanceKPIs(balanceMetrics);
@@ -1177,7 +1220,7 @@ function processAndRenderData(data) {
     renderMerchantsChart(normalized);
     renderRidgePlot(normalized);
     renderRacingChart(normalized);
-    renderInsights(normalized, kpis);
+    renderInsights(normalized, kpis, latestDataQualitySummary);
     
     console.log('✅ All visualizations rendered!');
 }
@@ -1263,6 +1306,110 @@ function calculateKPIs(data) {
     return { income, expenses, netSavings, savingsRate };
 }
 
+function safeRatio(numerator, denominator, fallback = null) {
+    const n = Number(numerator);
+    const d = Number(denominator);
+    if (!Number.isFinite(n) || !Number.isFinite(d) || d <= 0) {
+        return fallback;
+    }
+    return n / d;
+}
+
+function isUnknownMerchantLabel(value) {
+    const label = String(value || '').trim().toLowerCase();
+    if (!label) return true;
+    if (label === 'onbekend' || label === 'unknown') return true;
+    const compact = label.replace(/\s+/g, '');
+    if (/^[a-z]{2}\d{2}[a-z0-9]{10,30}$/i.test(compact)) return true; // IBAN-like
+    if (/^[a-z0-9._:-]{12,}$/i.test(compact) && !/\s/.test(label)) return true; // opaque token-like
+    return false;
+}
+
+function computeDataQualitySummary(transactions, accounts, serverSummary = null) {
+    const tx = Array.isArray(transactions) ? transactions : [];
+    const expenseTransactions = tx.filter((transaction) => (transaction.amount || 0) < 0);
+    const totalTransactions = tx.length;
+    const internalTransactions = tx.filter((transaction) => Boolean(transaction.is_internal_transfer)).length;
+
+    const categorizedExpenses = expenseTransactions.filter((transaction) => {
+        const category = String(transaction.category || '').trim().toLowerCase();
+        return Boolean(category) && !['overig', 'unknown', 'onbekend'].includes(category);
+    }).length;
+
+    const merchantNamedExpenses = expenseTransactions.filter((transaction) => {
+        const merchant = resolveMerchantLabel(transaction);
+        return !isUnknownMerchantLabel(merchant);
+    }).length;
+
+    const validAccounts = (accounts || []).filter((account) => account && account.balance);
+    const nonEurAccounts = validAccounts.filter((account) => (
+        String(account?.balance?.currency || 'EUR').toUpperCase() !== 'EUR'
+    ));
+    const nonEurConvertedAccounts = nonEurAccounts.filter((account) => {
+        const converted = Number(account?.balance_eur?.value);
+        return Number.isFinite(converted);
+    });
+
+    const categoryCoverage = safeRatio(categorizedExpenses, expenseTransactions.length, null);
+    const merchantCoverage = safeRatio(merchantNamedExpenses, expenseTransactions.length, null);
+    const internalShare = safeRatio(internalTransactions, totalTransactions, 0);
+    const fxCoverage = nonEurAccounts.length
+        ? safeRatio(nonEurConvertedAccounts.length, nonEurAccounts.length, null)
+        : 1;
+
+    const serverCoverage = serverSummary?.coverage || {};
+    const mergedCoverage = {
+        category_coverage: categoryCoverage ?? serverCoverage.category_coverage,
+        merchant_coverage: merchantCoverage ?? serverCoverage.merchant_coverage,
+        amount_eur_coverage: serverCoverage.amount_eur_coverage ?? 1,
+        fx_coverage: serverCoverage.fx_coverage ?? fxCoverage,
+        internal_share: internalShare ?? serverCoverage.internal_share
+    };
+
+    const score = Math.round(
+        100 * (
+            0.35 * (mergedCoverage.category_coverage ?? 0) +
+            0.30 * (mergedCoverage.merchant_coverage ?? 0) +
+            0.20 * (mergedCoverage.amount_eur_coverage ?? 0) +
+            0.15 * (mergedCoverage.fx_coverage ?? 0)
+        )
+    );
+
+    const warnings = [];
+    if (totalTransactions < 120) warnings.push('Relatief weinig transacties in deze periode.');
+    if ((mergedCoverage.category_coverage ?? 1) < 0.78) warnings.push('Categorie-dekking op uitgaven is laag.');
+    if ((mergedCoverage.merchant_coverage ?? 1) < 0.85) warnings.push('Merchant-dekking op uitgaven is laag.');
+    if ((mergedCoverage.amount_eur_coverage ?? 1) < 0.95) warnings.push('Niet alle transacties hebben EUR-waarde in lokale store.');
+    if ((mergedCoverage.fx_coverage ?? 1) < 0.95) warnings.push('Niet alle non-EUR rekeningen zijn omgerekend.');
+    if ((mergedCoverage.internal_share ?? 0) > 0.5) warnings.push('Meer dan 50% lijkt internal transfer.');
+    if (serverSummary?.metrics?.capture_freshness_hours > 24) warnings.push('Lokale cache is ouder dan 24 uur.');
+
+    let qualityLabel = 'Needs attention';
+    if (score >= 85) qualityLabel = 'Good';
+    else if (score >= 70) qualityLabel = 'Fair';
+
+    return {
+        score: Math.max(0, Math.min(100, score)),
+        qualityLabel,
+        metrics: {
+            total_transactions: totalTransactions,
+            expense_transactions: expenseTransactions.length,
+            internal_transactions: internalTransactions,
+            categorized_expenses: categorizedExpenses,
+            merchant_named_expenses: merchantNamedExpenses,
+            total_accounts: validAccounts.length,
+            non_eur_accounts: nonEurAccounts.length,
+            non_eur_converted_accounts: nonEurConvertedAccounts.length,
+            latest_capture_at: serverSummary?.metrics?.latest_capture_at ?? null,
+            capture_freshness_hours: serverSummary?.metrics?.capture_freshness_hours ?? null
+        },
+        coverage: mergedCoverage,
+        warnings,
+        recommendations: Array.isArray(serverSummary?.recommendations) ? serverSummary.recommendations : [],
+        source: serverSummary ? 'server+client' : 'client-only'
+    };
+}
+
 function formatCurrency(value) {
     return new Intl.NumberFormat('nl-NL', {
         style: 'currency',
@@ -1288,6 +1435,11 @@ function formatCurrencyWithCode(value, currencyCode = 'EUR') {
 
 function formatPercent(value) {
     return `${value.toFixed(1)}%`;
+}
+
+function formatRatioPercent(value) {
+    if (!Number.isFinite(Number(value))) return 'N/A';
+    return `${(Number(value) * 100).toFixed(1)}%`;
 }
 
 function renderKPIs(kpis, data) {
@@ -2138,6 +2290,86 @@ function showTransactionDetail(detailType) {
         return;
     }
 
+    if (detailType === 'data-quality') {
+        const quality = latestDataQualitySummary;
+        if (!quality || !quality.metrics) {
+            openDetailModal({
+                title: '<i class="fas fa-shield-halved"></i> Data quality',
+                summary: 'Nog geen kwaliteitsmeting beschikbaar.',
+                rows: [{ label: 'Laad eerst real data om kwaliteitsmetingen te berekenen.', value: '' }],
+                chart: null
+            });
+            return;
+        }
+
+        const coverage = quality.coverage || {};
+        const metrics = quality.metrics || {};
+        const componentRows = [
+            { label: 'Categorie-dekking', value: Number(coverage.category_coverage) || 0 },
+            { label: 'Merchant-dekking', value: Number(coverage.merchant_coverage) || 0 },
+            { label: 'EUR-dekking', value: Number(coverage.amount_eur_coverage) || 0 },
+            { label: 'FX-dekking', value: Number(coverage.fx_coverage) || 0 }
+        ];
+
+        const chart = {
+            trace: {
+                type: 'bar',
+                x: componentRows.map((row) => row.label),
+                y: componentRows.map((row) => row.value * 100),
+                marker: {
+                    color: componentRows.map((row) => (
+                        row.value >= 0.85 ? '#22c55e' :
+                        row.value >= 0.7 ? '#f59e0b' :
+                        '#ef4444'
+                    ))
+                },
+                hovertemplate: '%{x}<br>%{y:.1f}%<extra></extra>'
+            },
+            layout: {
+                margin: { t: 10, r: 20, l: 44, b: 64 },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#cbd5f5' },
+                xaxis: { tickangle: -20 },
+                yaxis: {
+                    title: 'Dekking (%)',
+                    range: [0, 100],
+                    gridcolor: 'rgba(255,255,255,0.08)'
+                }
+            }
+        };
+
+        const rows = [
+            { label: 'Quality score', value: `${quality.score}/100 (${quality.qualityLabel})` },
+            { label: 'Transacties (periode)', value: String(metrics.total_transactions ?? 0) },
+            { label: 'Uitgaven met categorie', value: `${metrics.categorized_expenses ?? 0}/${metrics.expense_transactions ?? 0} (${formatRatioPercent(coverage.category_coverage)})` },
+            { label: 'Uitgaven met merchant', value: `${metrics.merchant_named_expenses ?? 0}/${metrics.expense_transactions ?? 0} (${formatRatioPercent(coverage.merchant_coverage)})` },
+            { label: 'EUR-dekking', value: formatRatioPercent(coverage.amount_eur_coverage) },
+            { label: 'FX-dekking (non-EUR)', value: formatRatioPercent(coverage.fx_coverage) },
+            { label: 'Internal share', value: formatRatioPercent(coverage.internal_share) },
+            { label: 'Laatste cache-capture', value: metrics.latest_capture_at ? String(metrics.latest_capture_at) : 'N/A' }
+        ];
+
+        if (Array.isArray(quality.warnings) && quality.warnings.length) {
+            quality.warnings.forEach((warning, index) => {
+                rows.push({ label: `Waarschuwing ${index + 1}`, value: warning });
+            });
+        }
+        if (Array.isArray(quality.recommendations) && quality.recommendations.length) {
+            quality.recommendations.slice(0, 4).forEach((recommendation, index) => {
+                rows.push({ label: `Aanbeveling ${index + 1}`, value: recommendation });
+            });
+        }
+
+        openDetailModal({
+            title: '<i class="fas fa-shield-halved"></i> Data quality',
+            summary: 'Kwaliteitsscore voor analyses op basis van live transacties en lokale historie.',
+            rows,
+            chart
+        });
+        return;
+    }
+
     openDetailModal({
         title: '<i class="fas fa-info-circle"></i> Detail',
         summary: 'Geen detailweergave beschikbaar voor dit onderdeel.',
@@ -2274,9 +2506,9 @@ function renderSankeyChart(data) {
         return;
     }
 
-    const topIncome = selectTopWithRemainder(Object.entries(incomeByCategory), 5, 'Overig inkomen');
-    const topEssential = selectTopWithRemainder(Object.entries(essentialByCategory), 5, 'Overig essentials');
-    const topDiscretionary = selectTopWithRemainder(Object.entries(discretionaryByCategory), 5, 'Overig discretionary');
+    const topIncome = selectTopWithRemainder(Object.entries(incomeByCategory), 6, 'Overig inkomen', 0.08);
+    const topEssential = selectTopWithRemainder(Object.entries(essentialByCategory), 7, 'Overig essentials', 0.06);
+    const topDiscretionary = selectTopWithRemainder(Object.entries(discretionaryByCategory), 7, 'Overig discretionary', 0.06);
 
     const labels = [
         ...topIncome.map(([name]) => `In: ${name}`),
@@ -2290,6 +2522,7 @@ function renderSankeyChart(data) {
     const target = [];
     const value = [];
     const colors = [];
+    const linkSharePct = [];
 
     const cashInIndex = topIncome.length;
     const essentialsIndex = cashInIndex + 1;
@@ -2303,6 +2536,7 @@ function renderSankeyChart(data) {
         target.push(cashInIndex);
         value.push(amount);
         colors.push('rgba(34,197,94,0.5)');
+        linkSharePct.push(totalIncome > 0 ? (amount / totalIncome) * 100 : 0);
     });
 
     if (totalEssentials > 0.01) {
@@ -2310,6 +2544,7 @@ function renderSankeyChart(data) {
         target.push(essentialsIndex);
         value.push(totalEssentials);
         colors.push('rgba(59,130,246,0.42)');
+        linkSharePct.push(totalIncome > 0 ? (totalEssentials / totalIncome) * 100 : 0);
     }
 
     if (totalDiscretionary > 0.01) {
@@ -2317,6 +2552,7 @@ function renderSankeyChart(data) {
         target.push(discretionaryIndex);
         value.push(totalDiscretionary);
         colors.push('rgba(245,158,11,0.42)');
+        linkSharePct.push(totalIncome > 0 ? (totalDiscretionary / totalIncome) * 100 : 0);
     }
 
     topEssential.forEach(([, amount], idx) => {
@@ -2325,6 +2561,7 @@ function renderSankeyChart(data) {
         target.push(needsStartIndex + idx);
         value.push(amount);
         colors.push('rgba(59,130,246,0.34)');
+        linkSharePct.push(totalEssentials > 0 ? (amount / totalEssentials) * 100 : 0);
     });
 
     topDiscretionary.forEach(([, amount], idx) => {
@@ -2333,6 +2570,7 @@ function renderSankeyChart(data) {
         target.push(wantsStartIndex + idx);
         value.push(amount);
         colors.push('rgba(245,158,11,0.34)');
+        linkSharePct.push(totalDiscretionary > 0 ? (amount / totalDiscretionary) * 100 : 0);
     });
 
     const net = totalIncome - totalExpenses;
@@ -2342,12 +2580,14 @@ function renderSankeyChart(data) {
         target.push(labels.length - 1);
         value.push(net);
         colors.push('rgba(56,189,248,0.45)');
+        linkSharePct.push(totalIncome > 0 ? (net / totalIncome) * 100 : 0);
     } else if (net < 0) {
         labels.push('Buffer / Debt');
         source.push(labels.length - 1);
         target.push(cashInIndex);
         value.push(Math.abs(net));
         colors.push('rgba(251,191,36,0.45)');
+        linkSharePct.push(totalIncome > 0 ? (Math.abs(net) / totalIncome) * 100 : 0);
     }
 
     const trace = {
@@ -2375,14 +2615,25 @@ function renderSankeyChart(data) {
             target,
             value,
             color: colors,
-            hovertemplate: '%{source.label} → %{target.label}<br>%{value:.2f} EUR<extra></extra>'
+            customdata: linkSharePct,
+            hovertemplate: '%{source.label} → %{target.label}<br>%{value:.2f} EUR<br>%{customdata:.1f}% van bron<extra></extra>'
         }
     };
 
     const layout = {
         margin: { t: 20, r: 20, l: 20, b: 20 },
         paper_bgcolor: 'rgba(0,0,0,0)',
-        font: { color: '#cbd5f5' }
+        font: { color: '#cbd5f5' },
+        annotations: [{
+            text: `In ${formatCurrency(totalIncome)} · Uit ${formatCurrency(totalExpenses)} · Netto ${formatCurrency(net)}`,
+            showarrow: false,
+            x: 0,
+            y: 1.05,
+            xref: 'paper',
+            yref: 'paper',
+            xanchor: 'left',
+            font: { size: 12, color: '#cbd5f5' }
+        }]
     };
 
     Plotly.react(container, [trace], layout, { displayModeBar: false, responsive: true });
@@ -2453,8 +2704,9 @@ function renderSunburstChart(data) {
 
     const incomeEntries = selectTopWithRemainder(
         Array.from(incomeByCategory.entries()),
-        7,
-        'Overig inkomen'
+        9,
+        'Overig inkomen',
+        0.05
     );
     incomeEntries.forEach(([category, amount]) => {
         pushNode(`income:${category}`, category, 'income', amount, getCategoryColor(category));
@@ -2462,8 +2714,9 @@ function renderSunburstChart(data) {
 
     const expenseEntries = selectTopWithRemainder(
         Array.from(expenseByCategory.entries()),
-        10,
-        'Overig categorieen'
+        14,
+        'Overig categorieen',
+        0.03
     );
     expenseEntries.forEach(([category, amount]) => {
         const categoryId = `expense:${category}`;
@@ -2475,8 +2728,9 @@ function renderSunburstChart(data) {
 
         const merchantEntries = selectTopWithRemainder(
             Array.from(merchantMap.entries()),
-            12,
-            'Overig winkels'
+            16,
+            'Overig winkels',
+            0.04
         );
         merchantEntries.forEach(([merchant, merchantAmount]) => {
             pushNode(
@@ -2496,6 +2750,7 @@ function renderSunburstChart(data) {
         parents,
         values,
         branchvalues: 'total',
+        sort: false,
         maxdepth: 3,
         insidetextorientation: 'radial',
         insidetextfont: { color: '#ffffff' },
@@ -2508,7 +2763,7 @@ function renderSunburstChart(data) {
                 width: 2.2
             }
         },
-        hovertemplate: '%{label}<br>%{value:.2f} EUR<extra></extra>'
+        hovertemplate: '%{label}<br>%{value:.2f} EUR<br>%{percentParent:.1%} van parent<extra></extra>'
     };
     
     const layout = {
@@ -2860,10 +3115,27 @@ function isEssentialCategory(category) {
     return ESSENTIAL_CATEGORIES.has(category || 'Overig');
 }
 
-function selectTopWithRemainder(entries, limit, otherLabel) {
-    const sorted = [...entries].sort((a, b) => b[1] - a[1]);
-    const top = sorted.slice(0, limit);
-    const remainder = sorted.slice(limit).reduce((sum, entry) => sum + (Number(entry[1]) || 0), 0);
+function selectTopWithRemainder(entries, limit, otherLabel, minShare = 0) {
+    const cleaned = [...entries]
+        .map(([label, value]) => [label, Number(value) || 0])
+        .filter(([, value]) => value > 0)
+        .sort((a, b) => b[1] - a[1]);
+
+    if (!cleaned.length) return [];
+
+    const total = cleaned.reduce((sum, [, value]) => sum + value, 0);
+    const top = [];
+    let remainder = 0;
+
+    cleaned.forEach(([label, value], index) => {
+        const share = total > 0 ? value / total : 0;
+        if (index < limit || share >= minShare) {
+            top.push([label, value]);
+            return;
+        }
+        remainder += value;
+    });
+
     if (remainder > 0.0001) {
         top.push([otherLabel, remainder]);
     }
@@ -3126,6 +3398,13 @@ function buildActionPlan(transactions, kpis, liquidBalance = null, dailyBurn = 0
     const priorExpenses = windows.prior
         .filter((transaction) => transaction.amount < 0)
         .reduce((sum, transaction) => sum + Math.abs(transaction.amount || 0), 0);
+    const recentIncome = windows.recent
+        .filter((transaction) => transaction.amount > 0)
+        .reduce((sum, transaction) => sum + (transaction.amount || 0), 0);
+    const priorIncome = windows.prior
+        .filter((transaction) => transaction.amount > 0)
+        .reduce((sum, transaction) => sum + (transaction.amount || 0), 0);
+
     if (priorExpenses > 0.01) {
         const increasePct = ((recentExpenses - priorExpenses) / priorExpenses) * 100;
         if (increasePct > 10 && (recentExpenses - priorExpenses) > 35) {
@@ -3134,6 +3413,32 @@ function buildActionPlan(transactions, kpis, liquidBalance = null, dailyBurn = 0
                 title: 'Stop uitgavengroei',
                 summary: `Uitgaven stegen ${increasePct.toFixed(1)}% in laatste 30 dagen (${formatCurrency(recentExpenses - priorExpenses)}).`,
                 impact: Math.max(recentExpenses - priorExpenses, 0)
+            });
+        }
+    }
+
+    if (priorIncome > 0.01) {
+        const incomeDeltaPct = ((recentIncome - priorIncome) / priorIncome) * 100;
+        if (incomeDeltaPct < -12 && (priorIncome - recentIncome) > 75) {
+            actions.push({
+                priority: 1,
+                title: 'Anticipeer op lagere inkomensstroom',
+                summary: `Inkomen daalde ${Math.abs(incomeDeltaPct).toFixed(1)}% in laatste 30 dagen (${formatCurrency(priorIncome - recentIncome)}).`,
+                impact: Math.max((priorIncome - recentIncome) * 0.2, 0)
+            });
+        }
+    }
+
+    const categoryExpenses = buildExpenseByCategory(transactions);
+    const topCategory = Object.entries(categoryExpenses).sort((a, b) => b[1] - a[1])[0];
+    if (topCategory && kpis.expenses > 0.01) {
+        const topCategoryShare = (topCategory[1] / kpis.expenses) * 100;
+        if (topCategoryShare > 38) {
+            actions.push({
+                priority: 2,
+                title: 'Verminder categorie-concentratie',
+                summary: `${topCategory[0]} is ${topCategoryShare.toFixed(1)}% van alle uitgaven (${formatCurrency(topCategory[1])}).`,
+                impact: topCategory[1] * 0.1
             });
         }
     }
@@ -3180,7 +3485,17 @@ function buildActionPlan(transactions, kpis, liquidBalance = null, dailyBurn = 0
 
     if (liquidBalance !== null && dailyBurn > 0.01) {
         const runwayDays = liquidBalance / dailyBurn;
-        if (runwayDays < 90) {
+        if (runwayDays < 60) {
+            const targetBuffer = dailyBurn * 90;
+            const bufferGap = Math.max(targetBuffer - liquidBalance, 0);
+            actions.push({
+                priority: 1,
+                title: 'Urgent: buffer onder 2 maanden',
+                summary: `Runway is ${Math.round(runwayDays)} dagen. Richt op minimaal 90 dagen buffer.`,
+                impact: bufferGap
+            });
+        }
+        else if (runwayDays < 90) {
             const targetBuffer = dailyBurn * 90;
             const bufferGap = Math.max(targetBuffer - liquidBalance, 0);
             actions.push({
@@ -3224,7 +3539,7 @@ function buildActionPlan(transactions, kpis, liquidBalance = null, dailyBurn = 0
     }).slice(0, 8);
 }
 
-function renderInsights(data, kpis) {
+function renderInsights(data, kpis, qualitySummary = null) {
     const biggestCategory = document.getElementById('biggestCategory');
     const avgDaily = document.getElementById('avgDaily');
     const spendVolatility = document.getElementById('spendVolatility');
@@ -3237,6 +3552,7 @@ function renderInsights(data, kpis) {
     const recurringCosts = document.getElementById('recurringCosts');
     const nextBestAction = document.getElementById('nextBestAction');
     const projectedMonthNet = document.getElementById('projectedMonthNet');
+    const dataQualityScore = document.getElementById('dataQualityScore');
 
     const expenseByCategory = buildExpenseByCategory(data);
     const biggest = Object.entries(expenseByCategory).sort((a, b) => b[1] - a[1])[0];
@@ -3365,8 +3681,18 @@ function renderInsights(data, kpis) {
             nextBestAction.textContent = 'N/A';
         } else {
             nextBestAction.textContent = topAction.impact > 0.01
-                ? `${topAction.title} (${formatCurrency(topAction.impact)})`
-                : topAction.title;
+                ? `P${topAction.priority} · ${topAction.title} (${formatCurrency(topAction.impact)})`
+                : `P${topAction.priority} · ${topAction.title}`;
+        }
+    }
+
+    if (dataQualityScore) {
+        if (!qualitySummary || !qualitySummary.metrics || !qualitySummary.metrics.total_transactions) {
+            dataQualityScore.textContent = 'N/A';
+        } else {
+            const warningCount = Array.isArray(qualitySummary.warnings) ? qualitySummary.warnings.length : 0;
+            const warningSuffix = warningCount ? ` · ${warningCount} waarschuwing${warningCount > 1 ? 'en' : ''}` : '';
+            dataQualityScore.textContent = `${qualitySummary.score}/100 (${qualitySummary.qualityLabel})${warningSuffix}`;
         }
     }
 }

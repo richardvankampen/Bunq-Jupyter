@@ -89,3 +89,20 @@ curl -s http://127.0.0.1:5000/api/health
   2. aparte confirm voor deactiveren van overige ACTIVE IPs.
 - De knop toont nu expliciet een IP-prompt, met fallback op ingevuld veld of bekend egress IP.
 - Relevante commits: `e1cd3b3`, `cb04bdd`.
+
+## Update 2026-02-15 (P1 stap 1 t/m 4)
+
+- Nieuwe real-data kwaliteitsdiagnostiek:
+  - backend endpoint `GET /api/admin/data-quality`,
+  - score + coverage + warnings/recommendations op basis van `transaction_cache` en `account_snapshots`.
+- Dashboard heeft nieuwe doorklikbare insight `Data Quality` met detailmodal (component scores + concrete waarschuwingen).
+- Action-plan regels zijn aangescherpt op:
+  - inkomensdaling (rolling 30d),
+  - categorie-concentratie,
+  - urgente liquiditeitsrunway (<60 dagen).
+- Edge-cases uitgebreid:
+  - accounttype-detectie (`potje`, `stash`, `etf/equity`),
+  - categorisatiekeywords voor extra NL-merchants.
+- Sankey/Sunburst verfijnd voor meer informatiedichtheid:
+  - Sankey link-shares en in/uit/netto annotatie,
+  - Sunburst share-aware selectie (minder missende categorieën/merchants) + parent-percentage hover.
