@@ -3723,11 +3723,29 @@ async function setBunqWhitelistIp() {
     }
 
     const ipInputEl = document.getElementById('adminWhitelistIp');
+    const autoTargetEl = document.getElementById('adminOptionAutoTargetIp');
     const deactivateEl = document.getElementById('adminDeactivateOtherIps');
-    let targetIp = (ipInputEl?.value || '').trim();
-    const deactivateOthers = Boolean(deactivateEl?.checked);
+    const suggestedIp = (ipInputEl?.value || '').trim() || (adminStatusData?.egress_ip || '').trim();
+    const promptDefault = suggestedIp || '';
+    const prompted = window.prompt(
+        'Voer het nieuwe publieke IPv4-adres in voor Bunq whitelist.\nLaat leeg om automatisch egress-IP te gebruiken.',
+        promptDefault
+    );
+    if (prompted === null) {
+        return;
+    }
+    let targetIp = (prompted || '').trim();
+    const useAutoTarget = targetIp.length === 0;
 
-    if (targetIp) {
+    if (autoTargetEl) {
+        autoTargetEl.checked = useAutoTarget;
+    }
+    if (ipInputEl) {
+        ipInputEl.value = targetIp;
+        ipInputEl.disabled = useAutoTarget;
+    }
+
+    if (!useAutoTarget) {
         const ipValidation = validatePublicIpv4Input(targetIp);
         if (!ipValidation.valid) {
             renderAdminStatusPanel(adminStatusData, ipValidation.error, true);
@@ -3738,40 +3756,89 @@ async function setBunqWhitelistIp() {
             ipInputEl.value = targetIp;
         }
     }
-    const targetLabel = targetIp || 'current egress IP (auto)';
+    const targetLabel = useAutoTarget ? 'current egress IP (auto)' : targetIp;
 
     const confirmed = window.confirm(
-        `Set Bunq API whitelist IP to "${targetLabel}"?\n` +
-        (deactivateOthers ? 'Andere ACTIVE IPs worden op INACTIVE gezet.' : 'Andere ACTIVE IPs blijven ongewijzigd.')
+        `Veilige 2-staps update uitvoeren voor "${targetLabel}"?\n` +
+        'Stap 1: IP toevoegen/activeren (zonder andere IPs te deactiveren).\n' +
+        'Stap 2: na bevestiging andere ACTIVE IPs op INACTIVE zetten.'
     );
     if (!confirmed) return;
 
     await runAdminAction('adminSetWhitelistIp', '<i class="fas fa-spinner fa-spin"></i> Setting...', async () => {
-        const response = await authenticatedFetch(`${CONFIG.apiEndpoint}/admin/bunq/whitelist-ip`, {
+        const step1Response = await authenticatedFetch(`${CONFIG.apiEndpoint}/admin/bunq/whitelist-ip`, {
             method: 'POST',
             body: JSON.stringify({
-                ip: targetIp || null,
-                deactivate_others: deactivateOthers,
+                ip: useAutoTarget ? null : targetIp,
+                deactivate_others: false,
                 refresh_key: true,
                 force_recreate: false,
                 clear_runtime_cache: false
             })
         });
 
-        if (!response || !response.success) {
-            const errorText = response?.error || 'Bunq whitelist update mislukt.';
+        if (!step1Response || !step1Response.success) {
+            const errorText = step1Response?.error || 'Bunq whitelist update stap 1 mislukt.';
             renderAdminStatusPanel(adminStatusData, errorText, true);
             return;
         }
 
-        const data = response.data || {};
-        const actions = data.actions || {};
-        const message = `Whitelist set for ${data.target_ip || targetLabel}. ` +
+        const step1Data = step1Response.data || {};
+        const resolvedIp = step1Data.target_ip || targetIp || '';
+        const step1Actions = step1Data.actions || {};
+        const step1Message = `Stap 1 OK voor ${resolvedIp || targetLabel}: ` +
+            `created=${(step1Actions.created || []).length}, ` +
+            `activated=${(step1Actions.activated || []).length}, ` +
+            `deactivated=${(step1Actions.deactivated || []).length}.`;
+
+        const continueStep2 = window.confirm(
+            `${step1Message}\n\n` +
+            'Klik OK om nu stap 2 uit te voeren: andere ACTIVE IPs op INACTIVE zetten.'
+        );
+
+        if (!continueStep2) {
+            if (deactivateEl) {
+                deactivateEl.checked = false;
+            }
+            await loadAdminStatus();
+            renderAdminStatusPanel(
+                adminStatusData,
+                `${step1Message} Stap 2 overgeslagen (veilig).`,
+                false,
+                resolvedIp
+            );
+            return;
+        }
+
+        const step2Response = await authenticatedFetch(`${CONFIG.apiEndpoint}/admin/bunq/whitelist-ip`, {
+            method: 'POST',
+            body: JSON.stringify({
+                ip: resolvedIp || (useAutoTarget ? null : targetIp),
+                deactivate_others: true,
+                refresh_key: false,
+                force_recreate: false,
+                clear_runtime_cache: false
+            })
+        });
+
+        if (!step2Response || !step2Response.success) {
+            const errorText = step2Response?.error || 'Bunq whitelist update stap 2 mislukt.';
+            renderAdminStatusPanel(adminStatusData, `${step1Message} ${errorText}`, true);
+            return;
+        }
+
+        const step2Data = step2Response.data || {};
+        const actions = step2Data.actions || {};
+        const message = `Whitelist veilig bijgewerkt voor ${step2Data.target_ip || resolvedIp || targetLabel}. ` +
             `created=${(actions.created || []).length}, ` +
             `activated=${(actions.activated || []).length}, ` +
             `deactivated=${(actions.deactivated || []).length}.`;
+
+        if (deactivateEl) {
+            deactivateEl.checked = true;
+        }
         await loadAdminStatus();
-        renderAdminStatusPanel(adminStatusData, message, false, data.target_ip || '');
+        renderAdminStatusPanel(adminStatusData, message, false, step2Data.target_ip || resolvedIp || '');
     });
 }
 
