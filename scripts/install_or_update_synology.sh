@@ -18,6 +18,9 @@ NO_CACHE="${NO_CACHE:-ask}"
 BW_VERSION="${BW_VERSION:-}"
 BW_NPM_VERSION="${BW_NPM_VERSION:-}"
 BW_SHA256="${BW_SHA256:-}"
+CHECK_BUNQ_EGRESS_WHITELIST="${CHECK_BUNQ_EGRESS_WHITELIST:-true}"
+POST_DEPLOY_LOG_MINUTES="${POST_DEPLOY_LOG_MINUTES:-6}"
+DEPLOY_START_UTC=""
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "ERROR: docker command not found"
@@ -200,6 +203,7 @@ build_and_deploy() {
   $DOCKER_CMD tag "${IMAGE_REPO}:${TAG}" "${IMAGE_REPO}:local"
 
   say "Deploying stack ${STACK_NAME} ..."
+  DEPLOY_START_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   set -a
   . "./${ENV_FILE}"
   set +a
@@ -213,6 +217,115 @@ build_and_deploy() {
   fi
 }
 
+post_deploy_checks() {
+  say "Running post-deploy Bunq validation ..."
+
+  if [ -n "${DEPLOY_START_UTC}" ]; then
+    LOG_OUTPUT="$($DOCKER_CMD service logs --since "${DEPLOY_START_UTC}" "${SERVICE_NAME}" 2>&1 || true)"
+  else
+    LOG_OUTPUT="$($DOCKER_CMD service logs --since "${POST_DEPLOY_LOG_MINUTES}m" "${SERVICE_NAME}" 2>&1 || true)"
+  fi
+
+  if printf '%s\n' "${LOG_OUTPUT}" | grep -q "Incorrect API key or IP address"; then
+    say "ERROR: Bunq init failed with 'Incorrect API key or IP address'."
+    say "Response-id lines:"
+    printf '%s\n' "${LOG_OUTPUT}" | grep -E "response id|Incorrect API key or IP address" || true
+    say "Fix flow:"
+    say "  1) Check current egress IP from container"
+    say "  2) Ensure Bunq API key is valid for that IP"
+    say "  3) Re-register allowlist IP:"
+    say "     NO_PROMPT=true DEACTIVATE_OTHERS=true sh scripts/register_bunq_ip.sh ${SERVICE_NAME}"
+    exit 1
+  fi
+
+  if printf '%s\n' "${LOG_OUTPUT}" | grep -q "No valid API key found"; then
+    say "ERROR: No valid API key found during startup."
+    say "Check Vaultwarden/Docker secrets and retry."
+    exit 1
+  fi
+
+  if printf '%s\n' "${LOG_OUTPUT}" | grep -q "Bunq API initialized successfully"; then
+    say "OK: Bunq API initialized successfully."
+  else
+    say "WARN: No explicit 'Bunq API initialized successfully' line seen in recent logs."
+  fi
+
+  if [ "${CHECK_BUNQ_EGRESS_WHITELIST}" != "true" ]; then
+    say "Skipping egress-vs-whitelist validation (CHECK_BUNQ_EGRESS_WHITELIST=${CHECK_BUNQ_EGRESS_WHITELIST})."
+    return
+  fi
+
+  CONTAINER_ID="$($DOCKER_CMD ps --filter "name=${SERVICE_NAME}" -q | head -n1 || true)"
+  if [ -z "${CONTAINER_ID}" ]; then
+    say "WARN: no running container found for egress-vs-whitelist validation."
+    return
+  fi
+
+  CHECK_RAW="$($DOCKER_CMD exec "${CONTAINER_ID}" python3 - <<'PY'
+from api_proxy import (
+    get_public_egress_ip,
+    init_bunq,
+    get_bunq_user_id,
+    list_credential_password_profiles,
+    pick_credential_password_profile,
+    extract_credential_profile_id,
+    list_credential_password_ip_entries,
+    extract_whitelist_ip_entry,
+)
+
+status = "UNAVAILABLE"
+egress = get_public_egress_ip() or ""
+active_ips = []
+
+try:
+    if init_bunq(force_recreate=False, refresh_key=True, run_auto_whitelist=False):
+        user_id = get_bunq_user_id()
+        if user_id:
+            profiles = list_credential_password_profiles(user_id)
+            selected = pick_credential_password_profile(profiles) if profiles else None
+            profile_id = extract_credential_profile_id(selected) if selected else None
+            if profile_id:
+                entries = list_credential_password_ip_entries(user_id, profile_id)
+                active_ips = sorted({
+                    item.get("ip")
+                    for item in (extract_whitelist_ip_entry(entry) for entry in entries)
+                    if item.get("status") == "ACTIVE" and item.get("ip")
+                })
+                if egress and egress in active_ips:
+                    status = "MATCH"
+                elif egress and active_ips:
+                    status = "MISMATCH"
+                else:
+                    status = "UNAVAILABLE"
+except Exception:
+    status = "UNAVAILABLE"
+
+print(f"{status}|{egress}|{','.join(active_ips)}")
+PY
+  2>/dev/null || true)"
+  CHECK_LINE="$(printf '%s\n' "${CHECK_RAW}" | tail -n1)"
+  CHECK_STATUS="$(printf '%s' "${CHECK_LINE}" | cut -d'|' -f1)"
+  CHECK_EGRESS="$(printf '%s' "${CHECK_LINE}" | cut -d'|' -f2)"
+  CHECK_ACTIVE="$(printf '%s' "${CHECK_LINE}" | cut -d'|' -f3)"
+
+  case "${CHECK_STATUS}" in
+    MATCH)
+      say "OK: egress IP matches active Bunq whitelist (${CHECK_EGRESS})."
+      ;;
+    MISMATCH)
+      say "ERROR: egress IP (${CHECK_EGRESS}) is NOT in active Bunq whitelist (${CHECK_ACTIVE})."
+      say "Run:"
+      say "  NO_PROMPT=true DEACTIVATE_OTHERS=true sh scripts/register_bunq_ip.sh ${SERVICE_NAME}"
+      exit 1
+      ;;
+    *)
+      say "WARN: could not verify egress-vs-whitelist match automatically."
+      [ -n "${CHECK_EGRESS}" ] && say "Current egress IP: ${CHECK_EGRESS}"
+      [ -n "${CHECK_ACTIVE}" ] && say "Active whitelist IPs: ${CHECK_ACTIVE}"
+      ;;
+  esac
+}
+
 say "== Bunq Dashboard Synology Install/Update =="
 ensure_env_file
 load_env
@@ -221,4 +334,5 @@ ensure_network
 ensure_runtime_dirs
 ensure_secrets
 build_and_deploy
+post_deploy_checks
 say "Done."
