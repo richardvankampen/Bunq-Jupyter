@@ -127,3 +127,28 @@ Dit bestand houdt een compacte voortgangshistorie bij, zodat chatcontextverlies 
   - accounttype-classificatie gebruikt nu expliciete typevelden (`monetary_account_type`, profile/setting type).
   - categorie-indeling uitgebreid met `Verzekering`, `Belastingen`, `Refund`, `Rente`.
   - MCC-mapping en keywordregels aangescherpt; categorisatie ontvangt nu ook transactie-`amount`.
+
+### Relevante commit
+
+- `cc73d56` Deepen budgeting metrics and harden categorization edge cases
+
+## 2026-02-15
+
+### Opgeleverd
+
+- Whitelist helper script robuuster gemaakt (`scripts/register_bunq_ip.sh`):
+  - multi-source egress IP detectie,
+  - publieke IPv4 validatie voor `TARGET_IP`,
+  - non-interactive run met `NO_PROMPT=true`,
+  - duidelijkere foutoutput bij whitelist failures.
+- Auto-whitelist startup-noise afgezwakt in backend:
+  - SDK-variant zonder credential-password endpoints logt nu warning i.p.v. error-noise.
+- Dashboard admin knop `Set Bunq API whitelist IP` aangepast naar veilige vaste 2-staps flow:
+  1. IP toevoegen/activeren zonder andere IPs te deactiveren,
+  2. expliciete confirm voor deactiveren van overige ACTIVE IPs.
+- Voor deze knop is nu ook een expliciete IP prompt toegevoegd (met fallback op ingevulde/suggested egress IP).
+
+### Relevante commits
+
+- `cb04bdd` Run whitelist button in safe two-step flow with IP prompt
+- `e1cd3b3` Harden whitelist helper script and downgrade auto-whitelist noise

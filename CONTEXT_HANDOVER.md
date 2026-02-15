@@ -77,3 +77,15 @@ sudo docker service update --force --image bunq-dashboard:local bunq_bunq-dashbo
 sudo docker service logs --since 5m bunq_bunq-dashboard | grep -E "Vaultwarden|API key|Bunq API|Error|initialized"
 curl -s http://127.0.0.1:5000/api/health
 ```
+
+## Update 2026-02-15 (whitelist flows)
+
+- Script `scripts/register_bunq_ip.sh` is hardener gemaakt:
+  - publieke IPv4 validatie,
+  - non-interactive support (`NO_PROMPT=true`),
+  - robuustere egress IP detectie en foutoutput.
+- Dashboard knop `Set Bunq API whitelist IP` draait nu in verplichte veilige 2-staps flow:
+  1. create/activate target IP zonder deactiveren van andere ACTIVE IPs,
+  2. aparte confirm voor deactiveren van overige ACTIVE IPs.
+- De knop toont nu expliciet een IP-prompt, met fallback op ingevuld veld of bekend egress IP.
+- Relevante commits: `e1cd3b3`, `cb04bdd`.
